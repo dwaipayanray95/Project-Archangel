@@ -95,18 +95,18 @@ To avoid keeping a Mac awake indefinitely, the retry logic runs on a schedule vi
 - Idempotent: the script checks for a `RUNNING` instance named `project-archangel` first and exits early if one already exists, so it's safe to leave the schedule running
 - "Out of capacity" / rate-limited responses exit `0` (not a failure) so they don't spam failure-notification emails every 5 minutes; only a genuinely unexpected error exits non-zero
 
-**Required GitHub encrypted secrets** (Settings → Secrets and variables → Actions), all specific to *this* OCI account/tenancy:
+**Required GitHub encrypted secrets** (Settings → Secrets and variables → Actions):
 
 | Secret | Value |
 |---|---|
 | `OCI_USER_OCID` | Your OCI user OCID (`oci iam user list`, or Console → My Profile) |
 | `OCI_FINGERPRINT` | Fingerprint of the API signing key uploaded in Console → My Profile → API Keys |
-| `OCI_TENANCY_OCID` | Tenancy OCID (see section 4) |
-| `OCI_REGION` | `ap-mumbai-1` |
 | `OCI_API_PRIVATE_KEY` | Full contents of `~/.oci/oci_api_key.pem` (the API signing key, **not** the SSH key) |
 | `OCI_SSH_PUBLIC_KEY` | Full contents of `~/Downloads/project-archangel-public.key.pub` |
 
-Never commit any of these as plain files — secrets only. Once the instance launches successfully, disable or delete the workflow (Actions tab → OCI Instance Retry → "..." → Disable workflow) so it stops running.
+Tenancy OCID and region are *not* stored as secrets — they aren't sensitive (already public in section 4 above and hardcoded in the scripts), so they're hardcoded directly in the workflow file instead.
+
+Never commit any of the above as plain files — secrets only. The workflow disables itself automatically once the instance launches successfully (see the last step in `oci-retry.yml`), so no manual cleanup is needed.
 
 ## 8. Post-Launch TODO (once the instance exists)
 
