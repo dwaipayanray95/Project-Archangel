@@ -1,0 +1,7 @@
+# Never commit real credentials/keys
+*.pem
+*.key
+*.key.pub
+.oci/
+oci_config
+*.ppk
