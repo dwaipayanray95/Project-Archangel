@@ -27,6 +27,13 @@ jobs:
         run: pip install oci-cli
 
       - name: Configure OCI CLI
+        # Tenancy OCID and region aren't sensitive (they're already public in
+        # README.md and hardcoded in scripts/oci_retry_once.sh as
+        # COMPARTMENT_ID/AD), so they're hardcoded here rather than stored as
+        # secrets. Only the actual credentials below come from secrets.
+        env:
+          OCI_TENANCY_OCID: "ocid1.tenancy.oc1..aaaaaaaabarxx7mbciow4ma43m4gl5q6pcbenxa3xynmq7eztbr3sgnfhfia"
+          OCI_REGION: "ap-mumbai-1"
         run: |
           mkdir -p ~/.oci
           umask 077
@@ -35,8 +42,8 @@ jobs:
           [DEFAULT]
           user=${{ secrets.OCI_USER_OCID }}
           fingerprint=${{ secrets.OCI_FINGERPRINT }}
-          tenancy=${{ secrets.OCI_TENANCY_OCID }}
-          region=${{ secrets.OCI_REGION }}
+          tenancy=$OCI_TENANCY_OCID
+          region=$OCI_REGION
           key_file=~/.oci/oci_api_key.pem
           EOF
 
