@@ -1,0 +1,70 @@
+name: OCI Instance Retry
+
+# Scheduled retry loop for launching the Always-Free Ampere A1 instance.
+# See README.md section 7. Each run is a single launch attempt; the
+# 5-minute schedule provides the retry loop (GitHub's minimum reliable
+# interval). Runs stop mattering once the instance exists - the script
+# checks for a running instance first and exits early if found.
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  actions: write   # needed to disable this workflow once the instance is up
+  contents: read
+
+jobs:
+  retry-launch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install OCI CLI
+        run: pip install oci-cli
+
+      - name: Configure OCI CLI
+        run: |
+          mkdir -p ~/.oci
+          umask 077
+          printf '%s' "${{ secrets.OCI_API_PRIVATE_KEY }}" > ~/.oci/oci_api_key.pem
+          cat > ~/.oci/config <<EOF
+          [DEFAULT]
+          user=${{ secrets.OCI_USER_OCID }}
+          fingerprint=${{ secrets.OCI_FINGERPRINT }}
+          tenancy=${{ secrets.OCI_TENANCY_OCID }}
+          region=${{ secrets.OCI_REGION }}
+          key_file=~/.oci/oci_api_key.pem
+          EOF
+
+      - name: Write SSH public key
+        run: printf '%s' "${{ secrets.OCI_SSH_PUBLIC_KEY }}" > /tmp/oci_ssh_key.pub
+
+      - name: Attempt launch
+        id: attempt
+        env:
+          SSH_KEY_PATH: /tmp/oci_ssh_key.pub
+        run: |
+          chmod +x scripts/oci_retry_once.sh
+          set +e
+          ./scripts/oci_retry_once.sh
+          code=$?
+          set -e
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          # 0 = instance exists/created (success), 75 = out of capacity/rate
+          # limited (expected, not a failure) - anything else is a real error.
+          if [ "$code" -ne 0 ] && [ "$code" -ne 75 ]; then
+            exit "$code"
+          fi
+
+      - name: Disable this workflow now that the instance exists
+        if: steps.attempt.outputs.exit_code == '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api --method PUT \
+            "/repos/${{ github.repository }}/actions/workflows/oci-retry.yml/disable"
+          echo "Instance is up - workflow disabled so it stops scheduling itself."

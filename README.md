@@ -85,15 +85,28 @@ chmod +x scripts/oci_retry.sh
 ```
 Needs to keep running (Mac must not sleep) until it succeeds — see Section 7 for a way to avoid babysitting a laptop.
 
-## 7. Alternative: GitHub Actions (not yet implemented)
+## 7. Alternative: GitHub Actions
 
-To avoid keeping a Mac awake indefinitely, the retry logic can run on a schedule via GitHub Actions instead:
+To avoid keeping a Mac awake indefinitely, the retry logic runs on a schedule via GitHub Actions instead: [`.github/workflows/oci-retry.yml`](.github/workflows/oci-retry.yml), calling [`scripts/oci_retry_once.sh`](scripts/oci_retry_once.sh) (a single-attempt variant of `oci_retry.sh` — each workflow run is one attempt, the cron schedule provides the loop).
+
 - Free tier: 2,000 minutes/month for private repos — a 5-minute-interval scheduled job that runs ~10–20s per invocation uses roughly 100–150 min/month, well within budget
 - GitHub's minimum reliable schedule interval is ~5 minutes (not the tighter 120s used locally)
 - This is a legitimate, lightweight use of Actions — not the kind of heavy/abusive automation prohibited in GitHub's terms (e.g. crypto mining)
-- OCI API credentials (`~/.oci/oci_api_key.pem` + config) would need to be added as **GitHub encrypted secrets**, never committed as plain files
+- Idempotent: the script checks for a `RUNNING` instance named `project-archangel` first and exits early if one already exists, so it's safe to leave the schedule running
+- "Out of capacity" / rate-limited responses exit `0` (not a failure) so they don't spam failure-notification emails every 5 minutes; only a genuinely unexpected error exits non-zero
 
-*(Workflow file to be added to `.github/workflows/` once implemented.)*
+**Required GitHub encrypted secrets** (Settings → Secrets and variables → Actions), all specific to *this* OCI account/tenancy:
+
+| Secret | Value |
+|---|---|
+| `OCI_USER_OCID` | Your OCI user OCID (`oci iam user list`, or Console → My Profile) |
+| `OCI_FINGERPRINT` | Fingerprint of the API signing key uploaded in Console → My Profile → API Keys |
+| `OCI_TENANCY_OCID` | Tenancy OCID (see section 4) |
+| `OCI_REGION` | `ap-mumbai-1` |
+| `OCI_API_PRIVATE_KEY` | Full contents of `~/.oci/oci_api_key.pem` (the API signing key, **not** the SSH key) |
+| `OCI_SSH_PUBLIC_KEY` | Full contents of `~/Downloads/project-archangel-public.key.pub` |
+
+Never commit any of these as plain files — secrets only. Once the instance launches successfully, disable or delete the workflow (Actions tab → OCI Instance Retry → "..." → Disable workflow) so it stops running.
 
 ## 8. Post-Launch TODO (once the instance exists)
 
