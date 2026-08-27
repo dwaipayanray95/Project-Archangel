@@ -3,9 +3,10 @@
 # Each workflow run is one attempt; the workflow's cron schedule provides the retry loop.
 #
 # Exit codes:
-#   0 - instance already exists, was just created, or out of capacity / rate
-#       limited (all expected outcomes - try again next scheduled run)
-#   1 - unexpected error (worth a look)
+#   0  - instance already exists or was just created (the goal is achieved -
+#        the caller should stop scheduling further runs)
+#   75 - out of capacity / rate limited (expected, try again next run)
+#   1  - unexpected error (worth a look)
 set -uo pipefail
 
 # ===== CONFIG - same values as scripts/oci_retry.sh =====
@@ -54,12 +55,10 @@ if echo "$result" | grep -q '"lifecycle-state"'; then
   exit 0
 elif echo "$result" | grep -qi "capacity"; then
   echo "Out of capacity. Will retry on the next scheduled run."
-  # Exit 0 (not a failure) so this expected, repeated condition doesn't
-  # spam GitHub's workflow-failure email notifications every 5 minutes.
-  exit 0
+  exit 75
 elif echo "$result" | grep -qi "TooManyRequests"; then
   echo "Rate limited. Will retry on the next scheduled run."
-  exit 0
+  exit 75
 else
   echo "Unexpected error - this is NOT the normal out-of-capacity case:"
   echo "$result"

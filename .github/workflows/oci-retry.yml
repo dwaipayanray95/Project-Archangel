@@ -11,6 +11,10 @@ on:
     - cron: "*/5 * * * *"
   workflow_dispatch: {}
 
+permissions:
+  actions: write   # needed to disable this workflow once the instance is up
+  contents: read
+
 jobs:
   retry-launch:
     runs-on: ubuntu-latest
@@ -40,8 +44,27 @@ jobs:
         run: printf '%s' "${{ secrets.OCI_SSH_PUBLIC_KEY }}" > /tmp/oci_ssh_key.pub
 
       - name: Attempt launch
+        id: attempt
         env:
           SSH_KEY_PATH: /tmp/oci_ssh_key.pub
         run: |
           chmod +x scripts/oci_retry_once.sh
+          set +e
           ./scripts/oci_retry_once.sh
+          code=$?
+          set -e
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          # 0 = instance exists/created (success), 75 = out of capacity/rate
+          # limited (expected, not a failure) - anything else is a real error.
+          if [ "$code" -ne 0 ] && [ "$code" -ne 75 ]; then
+            exit "$code"
+          fi
+
+      - name: Disable this workflow now that the instance exists
+        if: steps.attempt.outputs.exit_code == '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api --method PUT \
+            "/repos/${{ github.repository }}/actions/workflows/oci-retry.yml/disable"
+          echo "Instance is up - workflow disabled so it stops scheduling itself."
