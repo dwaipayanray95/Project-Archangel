@@ -24,14 +24,17 @@ MEMORY_GB=6
 
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Checking for an existing instance named '$DISPLAY_NAME'..."
 
+# Deliberately not filtered to --lifecycle-state RUNNING: a freshly launched
+# instance sits in PROVISIONING/STARTING for a bit before it's RUNNING, and a
+# RUNNING-only filter would miss it during that window and attempt a second
+# launch. Treat anything except TERMINATED/TERMINATING as "already handled".
 existing=$(oci compute instance list \
   --compartment-id "$COMPARTMENT_ID" \
   --display-name "$DISPLAY_NAME" \
-  --lifecycle-state RUNNING \
   2>&1)
 
-if echo "$existing" | grep -q '"lifecycle-state": "RUNNING"'; then
-  echo "Instance already exists and is RUNNING - nothing to do."
+if echo "$existing" | grep '"lifecycle-state"' | grep -qv -E 'TERMINATED|TERMINATING'; then
+  echo "Instance already exists (provisioning or running) - nothing to do."
   exit 0
 fi
 
