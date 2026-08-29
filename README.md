@@ -89,11 +89,11 @@ Needs to keep running (Mac must not sleep) until it succeeds — see Section 7 f
 
 To avoid keeping a Mac awake indefinitely, the retry logic runs on a schedule via GitHub Actions instead: [`.github/workflows/oci-retry.yml`](.github/workflows/oci-retry.yml), calling [`scripts/oci_retry_once.sh`](scripts/oci_retry_once.sh) (a single-attempt variant of `oci_retry.sh` — each workflow run is one attempt, the cron schedule provides the loop).
 
-- Free tier: 2,000 minutes/month for private repos — a 5-minute-interval scheduled job that runs ~10–20s per invocation uses roughly 100–150 min/month, well within budget
-- GitHub's minimum reliable schedule interval is ~5 minutes (not the tighter 120s used locally)
+- Free tier: 2,000 minutes/month for private repos. Runs every **15 minutes** (not 5 — a 5-minute interval, worst case run continuously for a full month, would use ~6,500 min/month and blow the budget; 15 minutes with pip caching keeps worst-case usage to roughly 700-900 min/month)
+- GitHub's minimum reliable schedule interval is ~5 minutes, but 15 minutes is used here deliberately to stay inside the free-tier budget even during a multi-week capacity dry spell
 - This is a legitimate, lightweight use of Actions — not the kind of heavy/abusive automation prohibited in GitHub's terms (e.g. crypto mining)
-- Idempotent: the script checks for a `RUNNING` instance named `project-archangel` first and exits early if one already exists, so it's safe to leave the schedule running
-- "Out of capacity" / rate-limited responses exit `0` (not a failure) so they don't spam failure-notification emails every 5 minutes; only a genuinely unexpected error exits non-zero
+- Idempotent: the script checks for an existing instance named `project-archangel` in any non-terminated state first and exits early if one is found, so it's safe to leave the schedule running
+- "Out of capacity" / rate-limited responses exit non-zero-but-not-a-failure (`75`) so they don't spam failure-notification emails every 15 minutes; only a genuinely unexpected error fails the job
 
 **Required GitHub encrypted secrets** (Settings → Secrets and variables → Actions):
 

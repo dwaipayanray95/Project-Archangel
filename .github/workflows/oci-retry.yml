@@ -2,13 +2,15 @@ name: OCI Instance Retry
 
 # Scheduled retry loop for launching the Always-Free Ampere A1 instance.
 # See README.md section 7. Each run is a single launch attempt; the
-# 5-minute schedule provides the retry loop (GitHub's minimum reliable
-# interval). Runs stop mattering once the instance exists - the script
-# checks for a running instance first and exits early if found.
+# 15-minute schedule provides the retry loop. Worst case (never succeeds,
+# runs the full month) this stays well under the 2,000 min/month free-tier
+# Actions budget for private repos - a 5-minute schedule would blow past it.
+# Runs stop mattering once the instance exists - the script checks for one
+# and exits early if found.
 
 on:
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "*/15 * * * *"
   workflow_dispatch: {}
 
 permissions:
@@ -22,6 +24,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          # No requirements.txt to key off, and the oci-cli version isn't
+          # pinned - key on the runner image so the cache stays valid across
+          # runs and just gets replaced if GitHub bumps the base image.
+          key: pip-oci-cli-${{ runner.os }}-${{ runner.arch }}
 
       - name: Install OCI CLI
         run: pip install oci-cli
