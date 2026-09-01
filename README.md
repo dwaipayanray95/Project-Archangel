@@ -48,7 +48,7 @@ ssh -i ~/Downloads/project-archangel.key ubuntu@<VPS_PUBLIC_IP>
 2. Run `oci setup config`:
    - Region: `ap-mumbai-1`
    - Generates a separate RSA **API signing keypair** (different from the SSH keypair above) at `~/.oci/oci_api_key.pem` (private) and `~/.oci/oci_api_key_public.pem` (public)
-   - No passphrase set
+   - **Turns out this key *is* passphrase-encrypted** (despite earlier notes here saying otherwise) — confirmed when the GitHub Actions workflow in section 7 tried to load it non-interactively. The passphrase itself lives wherever the Mac's `oci setup config` prompt answer went (password manager recommended, same as the SSH key) — it also has to be supplied as the `OCI_API_KEY_PASSPHRASE` GitHub secret for section 7's automation to authenticate
 3. Upload the API public key in OCI Console → **My Profile → API Keys**
 4. Verify with: `oci iam region list`
 
@@ -103,6 +103,7 @@ To avoid keeping a Mac awake indefinitely, the retry logic runs on a schedule vi
 | `OCI_USER_OCID` | Your OCI user OCID (`oci iam user list`, or Console → My Profile) |
 | `OCI_FINGERPRINT` | Fingerprint of the API signing key uploaded in Console → My Profile → API Keys |
 | `OCI_API_PRIVATE_KEY` | Full contents of `~/.oci/oci_api_key.pem` (the API signing key, **not** the SSH key) |
+| `OCI_API_KEY_PASSPHRASE` | The API signing key's passphrase (see section 4 — it does have one) |
 | `OCI_SSH_PUBLIC_KEY` | Full contents of `~/Downloads/project-archangel-public.key.pub` |
 
 Tenancy OCID and region are *not* stored as secrets — they aren't sensitive (already public in section 4 above and hardcoded in the scripts), so they're hardcoded directly in the workflow file instead.

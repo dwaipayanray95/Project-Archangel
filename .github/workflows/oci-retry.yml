@@ -56,22 +56,34 @@ jobs:
           tenancy=$OCI_TENANCY_OCID
           region=$OCI_REGION
           key_file=~/.oci/oci_api_key.pem
+          pass_phrase=${{ secrets.OCI_API_KEY_PASSPHRASE }}
           EOF
 
       - name: Validate private key file
-        # Catches the #1 real-world failure mode: OCI_API_PRIVATE_KEY got
-        # pasted with mangled line breaks (e.g. flattened to one line), which
-        # produces a file that LOOKS present but isn't valid PEM. Checked
-        # here so the error names the actual problem instead of `oci` later
-        # misreading a parse failure as "this key needs a passphrase" and
-        # hanging on an interactive prompt.
+        # Two distinct failure modes, checked separately so the error names
+        # the real problem instead of `oci` later misreading either one as
+        # "needs an interactive passphrase prompt" and hanging:
+        #   1. OCI_API_PRIVATE_KEY got pasted with mangled line breaks (e.g.
+        #      flattened to one line) - not valid PEM at all.
+        #   2. The key is passphrase-encrypted - needs OCI_API_KEY_PASSPHRASE
+        #      to match, or the wrong/missing passphrase secret will still
+        #      fail to decrypt it.
+        # -passin pass:"$PASSPHRASE" makes openssl fail immediately instead
+        # of prompting, whichever case this is - an empty passphrase secret
+        # correctly fails against an actually-encrypted key.
+        env:
+          PASSPHRASE: ${{ secrets.OCI_API_KEY_PASSPHRASE }}
         run: |
-          if ! openssl pkey -in ~/.oci/oci_api_key.pem -noout -check 2>/tmp/key_check.err; then
-            echo "::error::OCI_API_PRIVATE_KEY is not a valid, unencrypted private key. Re-copy the FULL contents of ~/.oci/oci_api_key.pem (including the -----BEGIN/-----END lines) into the secret, with the original line breaks intact - a common mistake is pasting it as one flattened line."
+          if ! openssl pkey -in ~/.oci/oci_api_key.pem -passin "pass:$PASSPHRASE" -noout -check 2>/tmp/key_check.err; then
+            if grep -q "ENCRYPTED" ~/.oci/oci_api_key.pem; then
+              echo "::error::Could not decrypt OCI_API_PRIVATE_KEY with the OCI_API_KEY_PASSPHRASE secret. Set/update that secret to the key's actual passphrase."
+            else
+              echo "::error::OCI_API_PRIVATE_KEY is not a valid private key. Re-copy the FULL contents of ~/.oci/oci_api_key.pem (including the -----BEGIN/-----END lines) into the secret, with the original line breaks intact - a common mistake is pasting it as one flattened line."
+            fi
             cat /tmp/key_check.err
             exit 1
           fi
-          echo "Private key file is valid PEM."
+          echo "Private key file is valid PEM and decrypts with the supplied passphrase."
 
       - name: Write SSH public key
         run: printf '%s' "${{ secrets.OCI_SSH_PUBLIC_KEY }}" > /tmp/oci_ssh_key.pub
