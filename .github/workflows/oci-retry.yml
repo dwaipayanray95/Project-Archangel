@@ -61,6 +61,19 @@ jobs:
       - name: Write SSH public key
         run: printf '%s' "${{ secrets.OCI_SSH_PUBLIC_KEY }}" > /tmp/oci_ssh_key.pub
 
+      - name: Verify OCI credentials
+        # Fails fast with a clear "auth is broken" error if any of the 4
+        # secrets is wrong/malformed, instead of letting that surface later
+        # buried inside an instance-launch error. GitHub automatically masks
+        # any secret value that appears in this step's output.
+        run: |
+          if ! oci iam region list > /tmp/oci_auth_check.json 2>/tmp/oci_auth_check.err; then
+            echo "::error::OCI authentication failed - check OCI_USER_OCID, OCI_FINGERPRINT, and OCI_API_PRIVATE_KEY secrets for typos or a mismatched keypair."
+            cat /tmp/oci_auth_check.err
+            exit 1
+          fi
+          echo "OCI credentials verified OK."
+
       - name: Attempt launch
         id: attempt
         env:
