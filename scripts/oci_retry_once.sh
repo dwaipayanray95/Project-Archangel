@@ -31,7 +31,7 @@ echo "[$(date '+%Y-%m-%d %H:%M:%S')] Checking for an existing instance named '$D
 existing=$(oci compute instance list \
   --compartment-id "$COMPARTMENT_ID" \
   --display-name "$DISPLAY_NAME" \
-  2>&1)
+  </dev/null 2>&1)
 
 if echo "$existing" | grep '"lifecycle-state"' | grep -qv -E 'TERMINATED|TERMINATING'; then
   echo "Instance already exists (provisioning or running) - nothing to do."
@@ -50,7 +50,7 @@ result=$(oci compute instance launch \
   --display-name "$DISPLAY_NAME" \
   --assign-public-ip true \
   --ssh-authorized-keys-file "${SSH_KEY_PATH:?SSH_KEY_PATH env var not set}" \
-  2>&1)
+  </dev/null 2>&1)
 
 if echo "$result" | grep -q '"lifecycle-state"'; then
   echo "SUCCESS! Instance created."
