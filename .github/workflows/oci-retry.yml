@@ -58,6 +58,21 @@ jobs:
           key_file=~/.oci/oci_api_key.pem
           EOF
 
+      - name: Validate private key file
+        # Catches the #1 real-world failure mode: OCI_API_PRIVATE_KEY got
+        # pasted with mangled line breaks (e.g. flattened to one line), which
+        # produces a file that LOOKS present but isn't valid PEM. Checked
+        # here so the error names the actual problem instead of `oci` later
+        # misreading a parse failure as "this key needs a passphrase" and
+        # hanging on an interactive prompt.
+        run: |
+          if ! openssl pkey -in ~/.oci/oci_api_key.pem -noout -check 2>/tmp/key_check.err; then
+            echo "::error::OCI_API_PRIVATE_KEY is not a valid, unencrypted private key. Re-copy the FULL contents of ~/.oci/oci_api_key.pem (including the -----BEGIN/-----END lines) into the secret, with the original line breaks intact - a common mistake is pasting it as one flattened line."
+            cat /tmp/key_check.err
+            exit 1
+          fi
+          echo "Private key file is valid PEM."
+
       - name: Write SSH public key
         run: printf '%s' "${{ secrets.OCI_SSH_PUBLIC_KEY }}" > /tmp/oci_ssh_key.pub
 
@@ -65,10 +80,12 @@ jobs:
         # Fails fast with a clear "auth is broken" error if any of the 4
         # secrets is wrong/malformed, instead of letting that surface later
         # buried inside an instance-launch error. GitHub automatically masks
-        # any secret value that appears in this step's output.
+        # any secret value that appears in this step's output. Stdin is
+        # redirected from /dev/null so a still-unexpected interactive prompt
+        # fails immediately instead of hanging until the job times out.
         run: |
-          if ! oci iam region list > /tmp/oci_auth_check.json 2>/tmp/oci_auth_check.err; then
-            echo "::error::OCI authentication failed - check OCI_USER_OCID, OCI_FINGERPRINT, and OCI_API_PRIVATE_KEY secrets for typos or a mismatched keypair."
+          if ! oci iam region list </dev/null > /tmp/oci_auth_check.json 2>/tmp/oci_auth_check.err; then
+            echo "::error::OCI authentication failed - check OCI_USER_OCID and OCI_FINGERPRINT secrets for typos, and confirm the fingerprint matches the uploaded API key."
             cat /tmp/oci_auth_check.err
             exit 1
           fi
