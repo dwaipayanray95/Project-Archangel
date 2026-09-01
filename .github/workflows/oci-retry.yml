@@ -39,7 +39,7 @@ jobs:
 
       - name: Configure OCI CLI
         # Tenancy OCID and region aren't sensitive (they're already public in
-        # README.md and hardcoded in scripts/oci_retry_once.sh as
+        # infra/README.md and hardcoded in infra/scripts/oci_retry_once.sh as
         # COMPARTMENT_ID/AD), so they're hardcoded here rather than stored as
         # secrets. Only the actual credentials below come from secrets.
         env:
@@ -108,9 +108,9 @@ jobs:
         env:
           SSH_KEY_PATH: /tmp/oci_ssh_key.pub
         run: |
-          chmod +x scripts/oci_retry_once.sh
+          chmod +x infra/scripts/oci_retry_once.sh
           set +e
-          ./scripts/oci_retry_once.sh
+          ./infra/scripts/oci_retry_once.sh
           code=$?
           set -e
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
