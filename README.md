@@ -94,6 +94,7 @@ To avoid keeping a Mac awake indefinitely, the retry logic runs on a schedule vi
 - This is a legitimate, lightweight use of Actions — not the kind of heavy/abusive automation prohibited in GitHub's terms (e.g. crypto mining)
 - Idempotent: the script checks for an existing instance named `project-archangel` in any non-terminated state first and exits early if one is found, so it's safe to leave the schedule running
 - "Out of capacity" / rate-limited responses exit non-zero-but-not-a-failure (`75`) so they don't spam failure-notification emails every 15 minutes; only a genuinely unexpected error fails the job
+- A dedicated "Verify OCI credentials" step runs `oci iam region list` before ever attempting a launch — if any secret is wrong (typo'd OCID, mismatched fingerprint/key pair, etc.) the job fails immediately at that step with a clear error, instead of the mistake surfacing later buried inside a launch failure. Check the failed run's logs (Actions tab → the red run → the "Verify OCI credentials" step) to see exactly what OCI rejected
 
 **Required GitHub encrypted secrets** (Settings → Secrets and variables → Actions):
 
