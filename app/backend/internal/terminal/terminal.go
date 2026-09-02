@@ -22,12 +22,64 @@ import (
 	"github.com/dwaipayanray95/project-archangel/backend/internal/wsproto"
 )
 
-// MaxSessions caps concurrent terminal sessions. This is a single-user
-// tool; a handful of tabs is plenty, and capping this bounds worst-case
-// memory/process usage on a 1GB box.
-const MaxSessions = 3
+const (
+	// MaxSessions caps concurrent terminal sessions. This is a single-user
+	// tool; a handful of tabs is plenty, and capping this bounds worst-case
+	// memory/process usage on a 1GB box.
+	MaxSessions = 3
+
+	// maxFrameBytes bounds a single WS message. Terminal I/O frames are
+	// small (a few KB of base64 at most); this just guards against a
+	// broken or hostile client sending something huge.
+	maxFrameBytes = 64 * 1024
+
+	// idleTimeout: a session with no traffic at all for this long is
+	// assumed dead and dropped, so it can't sit on one of only
+	// MaxSessions slots indefinitely. Refreshed on every frame received.
+	idleTimeout = 10 * time.Minute
+)
 
 var activeSessions atomic.Int32
+
+// tryAcquireSession atomically checks the session cap and reserves a slot
+// in one step - checking activeSessions.Load() and then calling Add(1)
+// separately would leave a window where two connections arriving at the
+// same instant could both pass the check before either increments,
+// letting the count exceed MaxSessions.
+func tryAcquireSession() bool {
+	for {
+		cur := activeSessions.Load()
+		if cur >= MaxSessions {
+			return false
+		}
+		if activeSessions.CompareAndSwap(cur, cur+1) {
+			return true
+		}
+	}
+}
+
+// sessions tracks every open connection so CloseAll can reach them. This
+// exists because WebSocket connections are hijacked out of net/http's
+// normal request handling once upgraded - http.Server.Shutdown() is
+// documented to NOT wait for or close hijacked connections like these, so
+// without this registry a server restart would silently orphan every open
+// shell instead of killing it.
+var (
+	sessionsMu sync.Mutex
+	sessions   = map[*websocket.Conn]struct{}{}
+)
+
+// CloseAll force-closes every open terminal session. Called from main on
+// shutdown, before/alongside http.Server.Shutdown, so in-flight PTY child
+// processes get killed and reaped (see the cleanup path in Handler) instead
+// of being abandoned when the process exits.
+func CloseAll() {
+	sessionsMu.Lock()
+	defer sessionsMu.Unlock()
+	for conn := range sessions {
+		_ = conn.Close()
+	}
+}
 
 var upgrader = websocket.Upgrader{
 	// Single-user personal tool behind WireGuard - the origin check that
@@ -37,10 +89,11 @@ var upgrader = websocket.Upgrader{
 }
 
 func Handler(w http.ResponseWriter, r *http.Request) {
-	if activeSessions.Load() >= MaxSessions {
+	if !tryAcquireSession() {
 		http.Error(w, "too many concurrent terminal sessions", http.StatusServiceUnavailable)
 		return
 	}
+	defer activeSessions.Add(-1)
 
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -49,8 +102,22 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	activeSessions.Add(1)
-	defer activeSessions.Add(-1)
+	sessionsMu.Lock()
+	sessions[conn] = struct{}{}
+	sessionsMu.Unlock()
+	defer func() {
+		sessionsMu.Lock()
+		delete(sessions, conn)
+		sessionsMu.Unlock()
+	}()
+
+	// Idle sessions shouldn't be able to hold one of only MaxSessions slots
+	// forever, and an unbounded frame is a real memory risk on a 1GB box.
+	// The deadline is refreshed on every successfully read frame in the main
+	// loop below (our protocol uses its own app-level ping/pong JSON frames,
+	// not WS control frames, so there's no separate pong handler to wire up).
+	conn.SetReadLimit(maxFrameBytes)
+	_ = conn.SetReadDeadline(time.Now().Add(idleTimeout))
 
 	shell := os.Getenv("SHELL")
 	if shell == "" {
@@ -113,6 +180,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			break
 		}
+		_ = conn.SetReadDeadline(time.Now().Add(idleTimeout))
 
 		var frame wsproto.Frame
 		if err := json.Unmarshal(raw, &frame); err != nil {

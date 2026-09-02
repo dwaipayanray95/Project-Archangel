@@ -5,14 +5,21 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"flag"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/dwaipayanray95/project-archangel/backend/internal/api"
 	"github.com/dwaipayanray95/project-archangel/backend/internal/auth"
 	"github.com/dwaipayanray95/project-archangel/backend/internal/config"
+	"github.com/dwaipayanray95/project-archangel/backend/internal/terminal"
 )
 
 func main() {
@@ -21,12 +28,13 @@ func main() {
 		return
 	}
 
-	configPath := "/etc/archangel/config.yaml"
-	if len(os.Args) > 1 && os.Args[1] == "-config" && len(os.Args) > 2 {
-		configPath = os.Args[2]
-	}
+	fs := flag.NewFlagSet("archangeld", flag.ExitOnError)
+	configPath := fs.String("config", "/etc/archangel/config.yaml", "path to config.yaml")
+	// Ignore the error: ExitOnError already handles a bad flag by printing
+	// usage and exiting, so there's nothing left to check here.
+	_ = fs.Parse(os.Args[1:])
 
-	cfg, err := config.Load(configPath)
+	cfg, err := config.Load(*configPath)
 	if err != nil {
 		slog.Error("failed to load config", "err", err)
 		os.Exit(1)
@@ -34,10 +42,47 @@ func main() {
 
 	router := api.NewRouter(cfg.TokenHash)
 
-	slog.Info("archangeld starting", "addr", cfg.Addr())
-	if err := http.ListenAndServe(cfg.Addr(), router); err != nil {
-		slog.Error("server exited", "err", err)
-		os.Exit(1)
+	srv := &http.Server{
+		Addr:    cfg.Addr(),
+		Handler: router,
+		// Guards the handshake phase only (Slowloris-class protection) -
+		// once a connection is upgraded to a WebSocket it's hijacked out of
+		// net/http's management, so this can't cut off a live terminal
+		// session.
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+
+	// Run the server in the background so the main goroutine can wait for a
+	// shutdown signal instead.
+	serveErr := make(chan error, 1)
+	go func() {
+		slog.Info("archangeld starting", "addr", cfg.Addr())
+		serveErr <- srv.ListenAndServe()
+	}()
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	select {
+	case err := <-serveErr:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("server exited", "err", err)
+			os.Exit(1)
+		}
+	case <-ctx.Done():
+		slog.Info("shutting down")
+
+		// WebSocket connections are hijacked out of net/http's request
+		// tracking once upgraded, so srv.Shutdown alone would never close
+		// or even notice them - close them explicitly first so their PTY
+		// child processes get killed and reaped instead of orphaned.
+		terminal.CloseAll()
+
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			slog.Error("graceful shutdown failed", "err", err)
+		}
 	}
 }
 
