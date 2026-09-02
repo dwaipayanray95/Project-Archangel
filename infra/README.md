@@ -46,7 +46,7 @@ Provisioned directly via the OCI Console — no capacity scarcity issue for this
 | Public IPv4 | `161.118.191.143` |
 | Created | 2026-09-01 |
 
-**Status:** running, baseline setup complete (see section 9).
+**Status:** running, baseline setup complete (see section 9), WireGuard configured with 3 peers (see section 10) — OCI Security List rule for `51820/udp` still needs adding before any device can actually connect.
 
 ## 4. SSH Access
 
@@ -138,6 +138,14 @@ Never commit any of the above as plain files — secrets only. The workflow disa
 
 Applied to `Archangel-Mk1` (AMD Micro) on 2026-09-01. **Run this same sequence on the Ampere A1 instance once it's allocated.**
 
+**Scripted** (does steps 3-7 below): [`infra/scripts/baseline_setup.sh`](scripts/baseline_setup.sh) — safe to re-run any time, every step checks whether it's already done first.
+```bash
+git clone https://github.com/dwaipayanray95/Project-Archangel.git && cd Project-Archangel
+./infra/scripts/baseline_setup.sh
+```
+
+Manual steps (what the script above actually does, kept here as reference/fallback):
+
 1. **Retrieve the public IP** — OCI Console → instance → Details tab → Public IP Address
 2. **First SSH connection**, confirm access (accept the host key fingerprint prompt — see section 4)
 3. **Update the base system:**
@@ -165,7 +173,7 @@ Applied to `Archangel-Mk1` (AMD Micro) on 2026-09-01. **Run this same sequence o
    sudo ufw enable
    ```
    Confirm with `y` when prompted about disrupting the current SSH session — allowing OpenSSH first prevents an actual lockout.
-   > Note: this only configures the OS-level firewall. OCI also has its own network-level firewall (VCN Security List / Network Security Group) in front of it — opening a new port later (e.g. for the app's API) will likely need **both** `ufw allow <port>` *and* a Security List rule in the OCI Console.
+   > Note: this only configures the OS-level firewall. OCI also has its own network-level firewall (VCN Security List / Network Security Group) in front of it — opening a new port later (e.g. WireGuard's, or the app's API) will likely need **both** `ufw allow <port>` *and* a Security List rule in the OCI Console. See section 10 for a real instance of this gotcha.
 7. **Verify everything held:**
    ```bash
    free -h && sudo ufw status
@@ -173,7 +181,46 @@ Applied to `Archangel-Mk1` (AMD Micro) on 2026-09-01. **Run this same sequence o
 
 Not yet done on any instance (deferred until the `app/` backend exists): installing dev tooling like Claude Code/git, deploying the Go backend itself.
 
-## 10. Related / Future Projects
+## 10. WireGuard VPN Setup
+
+The Archangel API (`app/backend`) is designed to be reachable **only** over a WireGuard tunnel, never the public internet directly (see the backend's architecture plan — "the connection needs to be ultra secure"). This section sets up the WireGuard side of that; the Go binary itself isn't deployed yet.
+
+**Scripted:** [`infra/scripts/wireguard_setup.sh`](scripts/wireguard_setup.sh)
+```bash
+./infra/scripts/wireguard_setup.sh
+```
+- Generates a server keypair and one peer keypair per device in the script's `PEERS` array (currently `phone`, `mac`, `windows` — edit the array to add/remove devices)
+- Writes `/etc/wireguard/wg0.conf` (server) and one `.conf` per device, all `chmod 600`
+- **Refuses to run if `/etc/wireguard/wg0.conf` already exists** — re-running it would regenerate every key and silently break every already-paired device. Pass `--force` if you genuinely want to regenerate everything (all devices then need to re-import their configs).
+- Every generated key is verified non-empty (and, in testing, verified to actually round-trip correctly through `wg pubkey`) before being written into a config — see the incident notes below for why this check exists.
+- Starts the tunnel (`wg-quick@wg0`) and opens `51820/udp` in `ufw`
+
+Applied to `Archangel-Mk1` on 2026-09-02: server on `10.10.0.1/24`, three peers on `10.10.0.2` (phone), `10.10.0.3` (mac), `10.10.0.4` (windows).
+
+**Pairing a device:**
+- **Phone:** `sudo qrencode -t ansiutf8 < /etc/wireguard/phone.conf`, scan the printed QR with the official WireGuard app (**+** → **Scan from QR code**)
+- **Mac / Windows:** the `.conf` files can't be scanned — they need to be transferred off the server (they contain a private key, so never paste their contents into chat/Slack/etc; use `scp` or a similar direct transfer), then imported into the WireGuard desktop app ("Import tunnel(s) from file...")
+
+**Required OCI Console step (easy to miss):** `ufw` only controls the box's own OS-level firewall. OCI has a separate network-level firewall (VCN Security List) in front of that, and it does **not** automatically open just because `ufw` did. Add an ingress rule: instance → **Subnet** → **Security Lists** → default list → **Add Ingress Rule** — Source CIDR `0.0.0.0/0`, Protocol `UDP`, Destination Port `51820`. Without this, the tunnel will show as configured correctly on the server but no external device will ever be able to connect — traffic gets dropped before it reaches `ufw` at all.
+
+**Incident notes (why the script is this defensive):** the first manual attempt at this setup hit two real, silent failures worth remembering:
+1. `wg genkey | tee /etc/wireguard/x_private.key | wg pubkey | sudo tee ...` — only the second `tee` had `sudo`; the private key `tee` failed permission-denied and the key was lost, without the pipeline itself failing loudly (the public key still computed correctly since it was piped through in memory regardless of the failed write).
+2. A `sudo` credential cache expired mid-setup (between separate commands run several minutes apart while working through this interactively), causing a later `$(sudo cat server_public.key)` inside a variable assignment to silently return empty — which then got written into multiple device config files as a blank `PublicKey =` line, with no error at any point.
+
+Both are exactly the class of bug that "did it print an error?" doesn't catch — the script's `require_nonempty` checks throughout, and running everything as one continuous script (so there's no time gap for a sudo cache to expire mid-setup), exist specifically because of this.
+
+## 11. Master Setup Script
+
+[`infra/scripts/install-archangel.sh`](scripts/install-archangel.sh) is the canonical "how do I set this box up" entrypoint — a thin orchestrator that runs `baseline_setup.sh` then `wireguard_setup.sh` in order (skipping WireGuard if it's already configured, to protect existing pairings). For a genuinely fresh instance:
+
+```bash
+git clone https://github.com/dwaipayanray95/Project-Archangel.git && cd Project-Archangel
+./infra/scripts/install-archangel.sh
+```
+
+It's meant to keep growing as new milestones land — deploying `app/backend`'s binary + systemd unit becomes a new step here once that deployment tooling exists and is verified, rather than being written speculatively ahead of time.
+
+## 12. Related / Future Projects
 
 - **Archangel control app** — decided: a **Go backend** (single static binary, SSH bridge + resource watchdog + file browser, holds real SSH credentials server-side) plus a **Flutter frontend** (Android-first, one Dart codebase with iOS/web reach later). The app authenticates to the Go API with its own token — it never touches the SSH key directly. Lives in `app/` at the repo root once work starts (see the root [`README.md`](../README.md)); not yet started.
 - Possible future use cases for the VPS(es): self-hosted WireGuard VPN, backend/staging host for the Us Together and Outstand app projects, personal automation projects (finance tracking, uptime monitoring, morning dashboard, etc.)
