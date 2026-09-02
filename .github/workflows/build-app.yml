@@ -93,7 +93,12 @@ jobs:
   build-windows:
     needs: plan
     if: needs.plan.outputs.windows == 'true'
-    runs-on: windows-latest
+    # Pinned rather than windows-latest: newer runner images have shipped
+    # with a Visual Studio setup that confuses CMake's generator
+    # auto-detection ("could not find any instance of Visual Studio" while
+    # it's actually just picked the wrong one) - windows-2022 is the known
+    # good image for this.
+    runs-on: windows-2022
     defaults:
       run:
         working-directory: app/frontend
@@ -113,6 +118,12 @@ jobs:
             app/frontend/.dart_tool
           key: ${{ runner.os }}-pub-${{ hashFiles('app/frontend/pubspec.lock') }}
           restore-keys: ${{ runner.os }}-pub-
+
+      # Sets VCINSTALLDIR/VSINSTALLDIR etc. from the actual installed VS2022,
+      # so Flutter's CMake invocation finds it directly instead of relying
+      # on its own auto-detection (the thing that picked the wrong
+      # generator above).
+      - uses: ilammy/msvc-dev-cmd@v1
 
       - run: flutter config --enable-windows-desktop
       - run: flutter pub get
