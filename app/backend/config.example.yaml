@@ -1,0 +1,16 @@
+# Copy to config.yaml (in this dir for local dev, or /etc/archangel/config.yaml
+# on the server) and fill in real values. config.yaml itself should never be
+# committed - see .gitignore.
+
+# MUST be the WireGuard interface IP once WireGuard is set up (e.g.
+# "10.10.0.1"). For local dev before WireGuard exists, 127.0.0.1 is fine -
+# never use 0.0.0.0 or a public IP.
+bind_addr: "127.0.0.1"
+port: 8443
+
+# Generate with: go run ./cmd/archangeld gen-token
+# Paste the printed token_hash value here - never the plaintext token.
+token_hash: ""
+
+# Milestone 2: directory the file browser is jailed to.
+files_root: ""

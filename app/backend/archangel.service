@@ -1,0 +1,32 @@
+[Unit]
+Description=Project Archangel control plane
+After=network-online.target wg-quick@wg0.service
+Wants=network-online.target
+Requires=wg-quick@wg0.service
+
+[Service]
+Type=simple
+ExecStart=/opt/archangel/archangeld -config /etc/archangel/config.yaml
+Restart=on-failure
+RestartSec=5
+User=archangel
+Group=archangel
+
+# Resource limits - OS-level backstop for the in-app watchdog (Milestone 3):
+# if the watchdog itself misbehaves, systemd is still the last line of
+# defense against this process eating the whole 1GB box.
+MemoryMax=150M
+MemoryHigh=120M
+CPUQuota=50%
+TasksMax=100
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/etc/archangel /var/log/archangel
+# File browser (Milestone 2) needs to read the configured files_root -
+# extend ReadWritePaths (or add ReadOnlyPaths) to cover that root once it's
+# set in config.yaml, rather than disabling ProtectHome wholesale.
+
+[Install]
+WantedBy=multi-user.target
