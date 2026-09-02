@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:wireguard_flutter/wireguard_flutter.dart';
 
+import 'macos_wireguard_channel.dart';
 import 'tunnel_config.dart';
 
 /// Our own status enum, decoupled from wireguard_flutter's [VpnStage] so
@@ -14,33 +15,39 @@ enum TunnelStatus { disconnected, connecting, connected, disconnecting, error, u
 const _kInterfaceName = 'archangel';
 const _kStorageKey = 'wg_tunnel_config';
 
-/// Same bundle identifier the macOS/iOS Packet Tunnel Provider extension
-/// must be registered under in Xcode (Signing & Capabilities ->
-/// App Groups / Network Extension). Unused on Android/Windows/Linux, but
-/// the plugin's API requires a value regardless of platform.
+/// Same bundle identifier the iOS Packet Tunnel Provider extension must be
+/// registered under in Xcode, if that platform is ever added. Unused on
+/// every platform this app actually targets, but wireguard_flutter's API
+/// requires a value regardless.
 const _kProviderBundleId = 'dev.archangel.archangel.tunnel';
 
 const _secureStorage = FlutterSecureStorage();
 
-/// Wraps wireguard_flutter behind a small app-specific API: load/save the
-/// paired config, connect/disconnect, and a status stream the UI observes.
+/// Wraps the platform's WireGuard backend behind a small app-specific API:
+/// load/save the paired config, connect/disconnect, and a status stream
+/// the UI observes.
 ///
-/// Platform support as of the underlying plugin (wireguard_flutter 0.1.3):
-///  - Android: real VpnService backend - works out of the box.
-///  - Windows: bundles the official WireGuardNT tunnel.dll/wireguard.dll
-///    and creates a Windows service to run the tunnel - this requires the
-///    app to be running elevated (see windows/runner's app manifest).
-///  - Linux: shells out to wg-quick directly - requires `wireguard-tools`
-///    installed and passwordless (or interactive) root for `wg-quick up`.
-///  - macOS: uses Apple's NetworkExtension/NETunnelProviderManager, which
-///    requires a separate Packet Tunnel Provider extension target added
-///    in Xcode, an Apple Developer Program membership, and the Network
-///    Extension entitlement - this is a manual one-time Xcode setup step,
-///    not something achievable purely from Dart. Until that target exists,
-///    connect() will fail on macOS with a clear error rather than crash.
+/// Platform backends:
+///  - Android: wireguard_flutter's real VpnService backend - works out of
+///    the box.
+///  - Windows: wireguard_flutter bundles the official WireGuardNT
+///    tunnel.dll/wireguard.dll and creates a Windows service to run the
+///    tunnel - this requires the app to be running elevated (see
+///    windows/runner's app manifest).
+///  - Linux: wireguard_flutter shells out to wg-quick directly - requires
+///    `wireguard-tools` installed and passwordless (or interactive) root.
+///  - macOS: a bundled wireguard-go binary driven directly via
+///    macos/Runner/WireGuardMacOS.swift, deliberately bypassing
+///    wireguard_flutter's NetworkExtension-based darwin backend (which
+///    needs a separate Packet Tunnel Provider Xcode target and a paid
+///    Apple Developer Program membership - see WIREGUARD.md for why the
+///    direct-utun approach avoids that, and its current unverified
+///    status).
 class WireGuardController extends ChangeNotifier {
   final _wg = WireGuardFlutter.instance;
+  final _macos = MacosWireGuardChannel();
   StreamSubscription<VpnStage>? _sub;
+  bool get _useMacosChannel => Platform.isMacOS;
 
   TunnelStatus _status = TunnelStatus.disconnected;
   TunnelStatus get status => _status;
@@ -60,13 +67,20 @@ class WireGuardController extends ChangeNotifier {
 
     await _loadSavedConfig();
 
+    if (_useMacosChannel) {
+      // No stage stream on this backend yet - status is set directly by
+      // connect()/disconnect() below instead of an event stream.
+      _status = TunnelStatus.disconnected;
+      notifyListeners();
+      return;
+    }
+
     try {
       await _wg.initialize(interfaceName: _kInterfaceName);
       _sub = _wg.vpnStageSnapshot.listen(_onStageChanged, onError: (_) {});
       unawaited(_wg.refreshStage());
     } catch (e) {
-      // Most commonly hit on macOS before the Network Extension target
-      // exists, or on Linux without wireguard-tools installed.
+      // Most commonly hit on Linux without wireguard-tools installed.
       _status = TunnelStatus.unsupported;
       _lastError = e.toString();
       notifyListeners();
@@ -125,6 +139,21 @@ class WireGuardController extends ChangeNotifier {
       return;
     }
     _lastError = null;
+
+    if (_useMacosChannel) {
+      _status = TunnelStatus.connecting;
+      notifyListeners();
+      try {
+        await _macos.connect(cfg.toWgQuickConfig());
+        _status = TunnelStatus.connected;
+      } catch (e) {
+        _status = TunnelStatus.error;
+        _lastError = e.toString();
+      }
+      notifyListeners();
+      return;
+    }
+
     try {
       await _wg.startVpn(
         serverAddress: cfg.serverAddress,
@@ -139,6 +168,17 @@ class WireGuardController extends ChangeNotifier {
   }
 
   Future<void> disconnect() async {
+    if (_useMacosChannel) {
+      try {
+        await _macos.disconnect();
+      } catch (e) {
+        _lastError = e.toString();
+      }
+      _status = TunnelStatus.disconnected;
+      notifyListeners();
+      return;
+    }
+
     try {
       await _wg.stopVpn();
     } catch (e) {
