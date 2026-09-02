@@ -27,22 +27,26 @@ make run
 `bind_addr` in `config.yaml` should stay `127.0.0.1` for local dev — it only
 becomes the WireGuard interface IP once actually deployed to the server.
 
-## Building for deployment
+## Deploying to a server
 
+**Scripted:** [`deploy.sh`](deploy.sh) — run this from your own machine (Mac, etc.), not on the server itself:
 ```bash
-make build-linux-amd64   # Archangel-Mk1 (AMD Micro)
-make build-linux-arm64   # Ampere A1, once allocated
+./deploy.sh
+# or override defaults:
+SERVER_HOST=1.2.3.4 SERVER_USER=ubuntu SSH_KEY=~/path/to/key ./deploy.sh
 ```
+It builds the binary locally, creates the `archangel` system user + directories on the server if they don't exist yet, copies and installs the binary, generates a fresh auth token **only if `/etc/archangel/config.yaml` doesn't already exist** (re-running never silently rotates an already-paired app's token), installs/updates the systemd service, and verifies it started. The generated token is shown exactly once — save it in a password manager immediately, it's needed to pair the Flutter app and the server never stores it in plaintext.
 
-Deploy the resulting binary to `/opt/archangel/archangeld` on the server,
-`archangel.service` to `/etc/systemd/system/`, and a real `config.yaml` to
-`/etc/archangel/config.yaml` with `bind_addr` set to the WireGuard interface
-IP — never `0.0.0.0` or the box's public IP.
+Safe to re-run any time you've rebuilt the binary — it'll redeploy the new build and restart the service without touching an existing config/token.
+
+**Manual equivalent** (what the script actually does, kept here for reference): build with `make build-linux-amd64` (Archangel-Mk1) or `make build-linux-arm64` (Ampere, once allocated), create a system `archangel` user, copy the binary to `/opt/archangel/archangeld`, `archangel.service` to `/etc/systemd/system/`, and a real `config.yaml` to `/etc/archangel/config.yaml` with `bind_addr` set to the WireGuard interface IP — never `0.0.0.0` or the box's public IP.
 
 ## Testing the terminal endpoint manually
 
-`curl` can't drive a full WebSocket session. A quick way to sanity-check:
-open `/ws/terminal?token=<your-token>` from a small Go or `websocat` client,
-send `{"type":"resize","cols":100,"rows":30}` then
+`curl` can't drive a full WebSocket session. Recommended: `websocat` (`brew install websocat`) —
+```bash
+websocat "ws://10.10.0.1:8443/ws/terminal?token=<your-token>"
+```
+then send `{"type":"resize","cols":100,"rows":30}` followed by
 `{"type":"stdin","data":"<base64 of your command + \n>"}`, and confirm you
 get `stdout` frames back and an `exit` frame when the shell exits.

@@ -23,10 +23,17 @@ TasksMax=100
 # Hardening
 NoNewPrivileges=true
 ProtectSystem=strict
-ReadWritePaths=/etc/archangel /var/log/archangel
+# ReadOnlyPaths, not ReadWritePaths: the daemon only ever reads
+# config.yaml at startup, and Milestone 1 logs to stdout/journald only -
+# no code path writes to disk anywhere, so no write grant is needed
+# (least privilege: grant write access when a real need exists, not
+# speculatively). /var/log/archangel isn't listed at all for the same
+# reason - add it back if/when Milestone 3's watchdog needs to write logs.
+ReadOnlyPaths=/etc/archangel
 # File browser (Milestone 2) needs to read the configured files_root -
-# extend ReadWritePaths (or add ReadOnlyPaths) to cover that root once it's
-# set in config.yaml, rather than disabling ProtectHome wholesale.
+# add a ReadOnlyPaths (or ReadWritePaths, if it needs to write/delete
+# files) entry covering that root once it's set in config.yaml, rather
+# than disabling ProtectHome wholesale.
 
 [Install]
 WantedBy=multi-user.target
