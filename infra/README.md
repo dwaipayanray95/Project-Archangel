@@ -6,6 +6,30 @@ This is the **recovery runbook**. If a server dies, gets deleted, or a fresh acc
 
 ---
 
+## Quickstart: set up a fresh server
+
+Two steps, run from two different places — details, caveats, and everything each one actually does are in sections 1-11 below, but this is the whole thing end to end.
+
+**1. On the new server itself** (SSH in first — see section 4 for the connection command), gets it from "just launched" to "baseline + WireGuard fully configured, firewall gotcha fixed and boot-persisted":
+```bash
+git clone https://github.com/dwaipayanray95/Project-Archangel.git
+cd Project-Archangel
+./infra/scripts/install-archangel.sh
+```
+
+**2. One manual step this can't automate:** open `51820/udp` in the OCI Console's Security List (VCN-level firewall — `ufw` alone isn't enough, see section 10). `install-archangel.sh` prints this reminder at the end too.
+
+**3. From your own machine** (not the server — this builds the Go binary locally and pushes it over), deploys the backend:
+```bash
+cd Project-Archangel/app/backend
+./deploy.sh
+```
+Prints a fresh API token once at the end — save it in a password manager immediately, you'll need it to pair the Flutter app.
+
+Both `install-archangel.sh` and `deploy.sh` are safe to re-run — they check the server's actual state before doing anything and never silently regenerate a WireGuard peer or auth token that's already paired with a device.
+
+---
+
 ## 1. Account & Region
 
 - **Cloud provider:** Oracle Cloud Infrastructure (OCI), Always Free tier
