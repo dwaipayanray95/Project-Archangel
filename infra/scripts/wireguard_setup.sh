@@ -59,6 +59,73 @@ require_nonempty() {
   fi
 }
 
+# fix_pre_ufw_iptables_gotcha <port>: some OCI Ubuntu images ship a
+# pre-existing iptables ruleset (ACCEPT established/related, ICMP, loopback,
+# new TCP/22, then a catch-all REJECT) that's separate from and evaluated
+# BEFORE ufw's own chains. `ufw allow <port>` looks completely correct in
+# `ufw status` and the service correctly shows as listening in `ss`, but
+# every packet still gets rejected by this earlier rule first - discovered
+# the hard way on Archangel-Mk1 (see infra/README.md section 10's incident
+# notes for the full diagnosis story: ufw-* chains stayed at 0 hits while
+# the REJECT rule's counter climbed).
+#
+# This only inserts a rule if that specific pattern is actually present -
+# it does not assume every box has this quirk (a from-scratch non-OCI box,
+# or a future OCI image without this default, should see this as a no-op).
+fix_pre_ufw_iptables_gotcha() {
+  local port="$1"
+
+  # Non-verbose `-L -n --line-numbers` columns are: num target prot opt
+  # source destination [extra]. Find the first catch-all REJECT/DROP rule
+  # (protocol "all", i.e. not scoped to a specific port/protocol) - that's
+  # the one sitting in front of ufw's chains.
+  local reject_line
+  reject_line=$(sudo iptables -L INPUT -n --line-numbers | awk \
+    '($2=="REJECT" || $2=="DROP") && $3=="all" { print $1; exit }')
+
+  if [[ -z "$reject_line" ]]; then
+    echo "    No pre-ufw catch-all REJECT/DROP rule detected - nothing to fix here."
+    return 0
+  fi
+
+  echo "    Found a catch-all $(sudo iptables -L INPUT -n --line-numbers | awk -v l="$reject_line" '$1==l{print $2}') rule at INPUT line $reject_line that runs BEFORE ufw's own chains (see infra/README.md section 10)."
+
+  local existing_line
+  existing_line=$(sudo iptables -L INPUT -n --line-numbers | awk -v port="$port" \
+    '$0 ~ ("udp dpt:" port) && $2=="ACCEPT" { print $1; exit }')
+
+  if [[ -n "$existing_line" && "$existing_line" -lt "$reject_line" ]]; then
+    echo "    ACCEPT rule for udp/$port already precedes it (line $existing_line) - nothing to insert."
+  else
+    echo "    Inserting ACCEPT udp/$port at line $reject_line, ahead of the reject rule."
+    sudo iptables -I INPUT "$reject_line" -p udp --dport "$port" -j ACCEPT
+  fi
+
+  echo "    Ensuring the fix survives a reboot (iptables-persistent)..."
+  if ! dpkg -s iptables-persistent > /dev/null 2>&1; then
+    sudo DEBIAN_FRONTEND=noninteractive apt install -y iptables-persistent
+  fi
+  sudo netfilter-persistent save
+
+  # Verify, not assume - re-read the live rules after the change instead of
+  # trusting the insert succeeded.
+  local new_reject_line new_accept_line
+  new_reject_line=$(sudo iptables -L INPUT -n --line-numbers | awk \
+    '($2=="REJECT" || $2=="DROP") && $3=="all" { print $1; exit }')
+  new_accept_line=$(sudo iptables -L INPUT -n --line-numbers | awk -v port="$port" \
+    '$0 ~ ("udp dpt:" port) && $2=="ACCEPT" { print $1; exit }')
+
+  if [[ -z "$new_accept_line" || -z "$new_reject_line" || "$new_accept_line" -ge "$new_reject_line" ]]; then
+    echo "ERROR: verification failed - ACCEPT rule for udp/$port is not correctly positioned before the reject rule. Aborting."
+    exit 1
+  fi
+  if [[ "$(systemctl is-enabled netfilter-persistent 2>/dev/null)" != "enabled" ]]; then
+    echo "ERROR: netfilter-persistent is not enabled - this fix would not survive a reboot. Aborting."
+    exit 1
+  fi
+  echo "    Verified: ACCEPT at line $new_accept_line precedes reject at line $new_reject_line, and the fix is persisted."
+}
+
 echo "==> Generating server keypair"
 wg genkey | sudo tee "$WG_DIR/server_private.key" > /dev/null
 sudo cat "$WG_DIR/server_private.key" | wg pubkey | sudo tee "$WG_DIR/server_public.key" > /dev/null
@@ -147,6 +214,8 @@ sudo systemctl restart wg-quick@wg0   # restart, not just start, in case --force
 
 echo "==> Opening $WG_PORT/udp in ufw"
 sudo ufw allow "${WG_PORT}/udp" > /dev/null
+
+fix_pre_ufw_iptables_gotcha "$WG_PORT"
 
 echo "==> Done. Current tunnel state:"
 sudo wg show
