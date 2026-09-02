@@ -180,12 +180,17 @@ jobs:
           restore-keys: ${{ runner.os }}-gradle-
 
       - run: flutter pub get
-      - run: flutter build apk --release
+
+      # arm64-v8a only, not a universal APK: every device this app targets
+      # (anything from the last ~6 years) is arm64, and skipping armeabi-v7a
+      # /x86_64 avoids compiling and packaging code nobody runs - faster
+      # build, smaller APK.
+      - run: flutter build apk --release --split-per-abi --target-platform android-arm64
 
       - uses: actions/upload-artifact@v4
         with:
-          name: archangel-android
-          path: app/frontend/build/app/outputs/flutter-apk/app-release.apk
+          name: archangel-android-arm64
+          path: app/frontend/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
           retention-days: 30
 
   build-backend:
