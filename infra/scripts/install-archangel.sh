@@ -43,20 +43,17 @@ else
 fi
 echo ""
 
-# ---------------------------------------------------------------------------
-# Next milestone's step goes here once it exists: building and deploying
-# app/backend's archangeld binary + systemd unit. Not added yet because
-# that deployment tooling (build, scp/transfer, install the .service file,
-# gen-token flow) hasn't been built and verified yet - see app/backend's
-# milestone plan. Adding a step here before that tooling actually exists
-# and is tested would be committing untested instructions, which is exactly
-# the kind of silent-failure risk this whole setup process has already
-# been bitten by twice (see infra/README.md's WireGuard section).
-# ---------------------------------------------------------------------------
-
 echo "############################################"
-echo "# Baseline + WireGuard setup complete."
+echo "# Baseline + WireGuard setup complete on this box."
+echo "#"
 echo "# Remaining manual step: open 51820/udp in the OCI Console's"
 echo "# Security List (VCN-level firewall) - ufw alone isn't enough,"
-echo "# see infra/README.md."
+echo "# see infra/README.md section 10."
+echo "#"
+echo "# This script only covers what runs ON the server. The backend"
+echo "# (app/backend) deploys from a DIFFERENT machine - your own laptop,"
+echo "# not this box - since it builds the Go binary locally and pushes"
+echo "# it over. It can't be folded into this script; run it separately"
+echo "# from your own machine once this finishes:"
+echo "#   cd app/backend && ./deploy.sh"
 echo "############################################"
