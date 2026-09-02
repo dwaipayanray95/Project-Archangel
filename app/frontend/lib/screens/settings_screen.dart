@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../data/app_state.dart';
+import '../services/archangeld_connection.dart';
 import '../services/tunnel_config.dart';
 import '../services/wireguard_controller.dart';
 import '../theme/tokens.dart';
@@ -35,6 +36,8 @@ class SettingsScreen extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   const _TunnelCard(),
+                  const SizedBox(height: 11),
+                  const _BackendCard(),
                   const SizedBox(height: 11),
                   AxCard(
                     padding: const EdgeInsets.all(15),
@@ -209,6 +212,55 @@ class _FilledPill extends StatelessWidget {
 
 /// The Tunnel card on Settings: real WireGuard state (via
 /// [WireGuardController]), pair/unpair, connect/disconnect, view config.
+/// Real archangeld host/token pairing (host:port + auth token, stored via
+/// flutter_secure_storage) — same connection the Terminal screen uses.
+class _BackendCard extends StatelessWidget {
+  const _BackendCard();
+
+  @override
+  Widget build(BuildContext context) {
+    final backend = context.watch<ArchangeldConnection>();
+    return AxCard(
+      padding: const EdgeInsets.all(15),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text('Backend', style: AxTextStyles.sans.copyWith(fontSize: 12.5, fontWeight: FontWeight.w700)),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 2),
+                decoration: BoxDecoration(
+                  color: (backend.isPaired ? AxColors.accent : AxColors.fg3).withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(AxRadius.pill),
+                ),
+                child: Text(
+                  backend.isPaired ? 'paired' : 'not paired',
+                  style: AxTextStyles.mono.copyWith(fontSize: 10, fontWeight: FontWeight.w500, color: backend.isPaired ? AxColors.accent : AxColors.fg3),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          if (backend.isPaired) ...[
+            _KvRow('Host', backend.host!),
+            const SizedBox(height: 12),
+            AxGhostButton(label: 'Unpair', color: AxColors.bad, onTap: backend.unpair),
+          ] else
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Text(
+                'Pair from the Terminal screen, or paste host + token there once archangeld prints them.',
+                style: AxTextStyles.sans.copyWith(fontSize: 11.5, color: AxColors.fg2),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 class _TunnelCard extends StatelessWidget {
   const _TunnelCard();
 
