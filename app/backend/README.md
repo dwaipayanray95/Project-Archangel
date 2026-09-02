@@ -7,12 +7,14 @@ reachable only over a WireGuard tunnel, never the public internet.
 Full architecture and API design: see the plan this was built from (route
 table, WebSocket frame protocol, WireGuard setup, systemd unit design).
 
-## Status: Milestone 1 (skeleton, auth, terminal)
+## Status: Milestone 1 (skeleton, auth, terminal) — deployed and verified
 
 Implemented:
 - `/api/v1/health` — unauthenticated liveness check
 - `/ws/terminal` — real interactive PTY shell over WebSocket, token-authed
 - Single shared token auth (`X-Archangel-Token` header or `?token=` query param for the WS handshake)
+
+Deployed to `Archangel-Mk1` (2026-09-02) and verified end-to-end over the real network path (not just localhost): health endpoint reachable via the WireGuard IP and confirmed unreachable via the public IP, and a real terminal session (decoded `stdout` frame showing the actual live shell prompt) confirmed working over the tunnel from a paired Mac. See `infra/README.md` section 10 for the firewall issues hit and fixed along the way.
 
 Not yet implemented (later milestones): files, services, stats/watchdog, Docker, OCI instance control.
 

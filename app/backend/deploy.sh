@@ -45,7 +45,7 @@ if [[ ! -f "$SSH_KEY" ]]; then
   exit 1
 fi
 
-echo "==> [1/6] Building archangeld for linux/amd64"
+echo "==> [1/7] Building archangeld for linux/amd64"
 if ! command -v go > /dev/null; then
   echo "ERROR: Go isn't installed on this machine."
   echo "Install it first - on a Mac: brew install go"
@@ -56,7 +56,7 @@ fi
 echo "    Built: $SCRIPT_DIR/bin/archangeld-amd64"
 echo ""
 
-echo "==> [2/6] Checking the connection to $SERVER_HOST"
+echo "==> [2/7] Checking the connection to $SERVER_HOST"
 if ! ssh_cmd "echo ok" > /dev/null 2>&1; then
   echo "ERROR: could not SSH to ${SERVER_USER}@${SERVER_HOST} using $SSH_KEY."
   echo "Check the server is up, the IP is current, and the key path/permissions"
@@ -66,7 +66,7 @@ fi
 echo "    Connected OK."
 echo ""
 
-echo "==> [3/6] Ensuring the server user + directories exist"
+echo "==> [3/7] Ensuring the server user + directories exist"
 ssh_cmd bash <<'REMOTE'
 set -e
 if id archangel > /dev/null 2>&1; then
@@ -82,7 +82,7 @@ echo "    Directories ready."
 REMOTE
 echo ""
 
-echo "==> [4/6] Copying and installing the binary"
+echo "==> [4/7] Copying and installing the binary"
 scp_cmd "$SCRIPT_DIR/bin/archangeld-amd64" "${SERVER_USER}@${SERVER_HOST}:/tmp/archangeld"
 ssh_cmd bash <<'REMOTE'
 set -e
@@ -93,7 +93,7 @@ echo "    Installed to /opt/archangel/archangeld"
 REMOTE
 echo ""
 
-echo "==> [5/6] Server config"
+echo "==> [5/7] Server config"
 if ssh_cmd '[[ -f /etc/archangel/config.yaml ]]' 2>/dev/null; then
   echo "    /etc/archangel/config.yaml already exists - leaving the existing"
   echo "    token in place (regenerating it here would silently break an"
@@ -145,7 +145,7 @@ sudo chmod 640 /etc/archangel/config.yaml"
 fi
 echo ""
 
-echo "==> [6/6] Installing and (re)starting the systemd service"
+echo "==> [6/7] Installing and (re)starting the systemd service"
 scp_cmd "$SCRIPT_DIR/archangel.service" "${SERVER_USER}@${SERVER_HOST}:/tmp/archangel.service"
 ssh_cmd bash <<'REMOTE'
 set -e
@@ -161,6 +161,29 @@ else
   echo "and: sudo journalctl -u archangel -n 50 --no-pager"
   exit 1
 fi
+REMOTE
+echo ""
+
+echo "==> [7/7] Firewall: opening ${PORT}/tcp (WireGuard interface only)"
+# ufw's own rule is still worth having as a second, independent layer, but
+# on Archangel-Mk1 it alone was NOT sufficient - a pre-existing catch-all
+# reject rule in the raw kernel ruleset (unrelated to ufw, sits ahead of
+# it) silently ate every connection despite `ufw status` and `ss -tlnp`
+# both looking completely correct. See infra/README.md section 10 for the
+# full incident writeup. allow_port_before_reject.sh is the actual fix;
+# ensure_boot_fw_fixup.sh makes it (and the ufw rule) survive a reboot.
+ssh_cmd "sudo ufw allow in on wg0 to any port ${PORT} proto tcp" > /dev/null || true
+
+INFRA_SCRIPTS_DIR="$(cd "$SCRIPT_DIR/../../infra/scripts" && pwd)"
+scp_cmd "$INFRA_SCRIPTS_DIR/allow_port_before_reject.sh" "$INFRA_SCRIPTS_DIR/ensure_boot_fw_fixup.sh" \
+  "${SERVER_USER}@${SERVER_HOST}:/tmp/"
+ssh_cmd bash <<REMOTE
+set -e
+sudo mkdir -p /opt/archangel-infra-scripts
+sudo mv /tmp/allow_port_before_reject.sh /tmp/ensure_boot_fw_fixup.sh /opt/archangel-infra-scripts/
+sudo chmod 755 /opt/archangel-infra-scripts/*.sh
+/opt/archangel-infra-scripts/allow_port_before_reject.sh ${PORT} tcp
+/opt/archangel-infra-scripts/ensure_boot_fw_fixup.sh ${PORT} tcp
 REMOTE
 echo ""
 
