@@ -194,8 +194,9 @@ The Archangel API (`app/backend`) is designed to be reachable **only** over a Wi
 - **Refuses to run if `/etc/wireguard/wg0.conf` already exists** — re-running it would regenerate every key and silently break every already-paired device. Pass `--force` if you genuinely want to regenerate everything (all devices then need to re-import their configs).
 - Every generated key is verified non-empty (and, in testing, verified to actually round-trip correctly through `wg pubkey`) before being written into a config — see the incident notes below for why this check exists.
 - Starts the tunnel (`wg-quick@wg0`) and opens `51820/udp` in `ufw`
+- Detects and fixes the pre-`ufw` iptables gotcha described below (incident note 3) — safe no-op on a box that doesn't have this quirk
 
-Applied to `Archangel-Mk1` on 2026-09-02: server on `10.10.0.1/24`, three peers on `10.10.0.2` (phone), `10.10.0.3` (mac), `10.10.0.4` (windows).
+Applied to `Archangel-Mk1` on 2026-09-02: server on `10.10.0.1/24`, three peers on `10.10.0.2` (phone), `10.10.0.3` (mac), `10.10.0.4` (windows). Verified fully working end-to-end: `wg show` shows a real handshake, `ping 10.10.0.1` succeeds from a paired device, and every piece of the setup (swap, `ufw`, `wg-quick@wg0`, the iptables fix below) confirmed `systemctl is-enabled` = `enabled`, i.e. actually persists across a reboot, not just working until the next restart.
 
 **Pairing a device:**
 - **Phone:** `sudo qrencode -t ansiutf8 < /etc/wireguard/phone.conf`, scan the printed QR with the official WireGuard app (**+** → **Scan from QR code**)
@@ -203,11 +204,12 @@ Applied to `Archangel-Mk1` on 2026-09-02: server on `10.10.0.1/24`, three peers 
 
 **Required OCI Console step (easy to miss):** `ufw` only controls the box's own OS-level firewall. OCI has a separate network-level firewall (VCN Security List) in front of that, and it does **not** automatically open just because `ufw` did. Add an ingress rule: instance → **Subnet** → **Security Lists** → default list → **Add Ingress Rule** — Source CIDR `0.0.0.0/0`, Protocol `UDP`, Destination Port `51820`. Without this, the tunnel will show as configured correctly on the server but no external device will ever be able to connect — traffic gets dropped before it reaches `ufw` at all.
 
-**Incident notes (why the script is this defensive):** the first manual attempt at this setup hit two real, silent failures worth remembering:
+**Incident notes (why the script is this defensive):** getting this actually working hit three real, silent failures worth remembering:
 1. `wg genkey | tee /etc/wireguard/x_private.key | wg pubkey | sudo tee ...` — only the second `tee` had `sudo`; the private key `tee` failed permission-denied and the key was lost, without the pipeline itself failing loudly (the public key still computed correctly since it was piped through in memory regardless of the failed write).
 2. A `sudo` credential cache expired mid-setup (between separate commands run several minutes apart while working through this interactively), causing a later `$(sudo cat server_public.key)` inside a variable assignment to silently return empty — which then got written into multiple device config files as a blank `PublicKey =` line, with no error at any point.
+3. **The big one:** even with correct keys, correct `ufw` rules, and the correct OCI Security List rule, `ping 10.10.0.1` still failed with zero WireGuard handshake. `ufw status` and `ss -ulnp` both looked completely correct. The actual cause: this OCI Ubuntu image ships a pre-existing iptables ruleset — separate from and evaluated **before** `ufw`'s own chains — allowing only established/related traffic, ICMP, loopback, and new TCP/22, then a catch-all `REJECT`. Diagnosed via `sudo tcpdump -ni any udp port 51820` (which showed packets genuinely arriving at the NIC) followed by `sudo iptables -L INPUT -n -v --line-numbers` (which showed the `ufw-*` chains sitting at 0 hits while the REJECT rule's counter climbed — proving traffic was being rejected before it ever reached `ufw`'s rules). Fixed by inserting an explicit `ACCEPT udp --dport 51820` rule ahead of the REJECT rule, and installing `iptables-persistent` (not present by default) so the fix survives a reboot. `wireguard_setup.sh` now detects and fixes this automatically (see the script description above) — this should never need manual diagnosis again on the Ampere box.
 
-Both are exactly the class of bug that "did it print an error?" doesn't catch — the script's `require_nonempty` checks throughout, and running everything as one continuous script (so there's no time gap for a sudo cache to expire mid-setup), exist specifically because of this.
+All three are exactly the class of bug that "did it print an error?" doesn't catch. The script's `require_nonempty` checks, running everything as one continuous script (no time gap for a sudo cache to expire mid-setup), and now the iptables detection/fix with its own verification step, all exist specifically because of this.
 
 ## 11. Master Setup Script
 
