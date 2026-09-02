@@ -75,7 +75,21 @@ class TerminalSession extends ChangeNotifier {
 
     // Real dimensions first, matching the backend's own comment that it
     // defaults to 24x80 and expects a resize frame right after connecting.
-    resize(cols, rows);
+    // Waits for `ready` first: web_socket_channel's own docs say sink
+    // writes aren't guaranteed to be delivered until the connection is
+    // actually established, so sending immediately risked losing this
+    // frame and leaving the PTY at the backend's 80x24 default.
+    _channel!.ready.then((_) {
+      resize(cols, rows);
+    }).catchError((Object e) {
+      // Already surfaced via the stream's onError above in the normal
+      // case; this only fires if `ready` fails before the stream does.
+      if (_status != SessionStatus.error) {
+        _status = SessionStatus.error;
+        _error = 'Could not open connection: $e';
+        notifyListeners();
+      }
+    });
   }
 
   void _onMessage(dynamic raw) {

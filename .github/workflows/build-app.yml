@@ -131,7 +131,7 @@ jobs:
 
       - name: Zip the release folder
         working-directory: app/frontend/build/windows/x64/runner/Release
-        run: Compress-Archive -Path * -DestinationPath ../../../../../Archangel-windows.zip
+        run: Compress-Archive -Path * -DestinationPath ../../../../Archangel-windows.zip
 
       - uses: actions/upload-artifact@v4
         with:
