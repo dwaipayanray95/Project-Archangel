@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
-import '../data/mock_data.dart';
+import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
+import '../services/archangeld_connection.dart';
+import '../services/terminal_session.dart';
 import '../theme/tokens.dart';
+import '../widgets/ax_widgets.dart';
 
 class TerminalScreen extends StatefulWidget {
   const TerminalScreen({super.key});
@@ -9,19 +13,59 @@ class TerminalScreen extends StatefulWidget {
   State<TerminalScreen> createState() => _TerminalScreenState();
 }
 
-class _TerminalScreenState extends State<TerminalScreen> with SingleTickerProviderStateMixin {
+class _TerminalScreenState extends State<TerminalScreen> {
+  final List<TerminalSession> _sessions = [];
   int _tab = 0;
-  late final AnimationController _cursor = AnimationController(vsync: this, duration: const Duration(milliseconds: 1050))..repeat();
+  int _nextId = 1;
 
   @override
   void dispose() {
-    _cursor.dispose();
+    for (final s in _sessions) {
+      s.dispose();
+    }
     super.dispose();
+  }
+
+  void _openSession(ArchangeldConnection backend) {
+    final session = TerminalSession(label: 'shell $_nextId');
+    _nextId++;
+    session.connect(backend);
+    setState(() {
+      _sessions.add(session);
+      _tab = _sessions.length - 1;
+    });
+  }
+
+  void _closeSession(int index) {
+    final session = _sessions[index];
+    session.close();
+    session.dispose();
+    setState(() {
+      _sessions.removeAt(index);
+      if (_tab >= _sessions.length) _tab = _sessions.length - 1;
+    });
   }
 
   @override
   Widget build(BuildContext context) {
-    final session = termSessions[_tab];
+    final backend = context.watch<ArchangeldConnection>();
+
+    if (!backend.isPaired) {
+      return _UnpairedPrompt(onPaired: () => setState(() {}));
+    }
+
+    if (_sessions.isEmpty) {
+      // Auto-open the first tab as soon as we're paired, so Terminal
+      // "just works" the way the mockup implies rather than requiring an
+      // extra click.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _sessions.isEmpty) _openSession(backend);
+      });
+      return const Center(
+        child: CircularProgressIndicator(strokeWidth: 2, color: AxColors.accent),
+      );
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -30,85 +74,318 @@ class _TerminalScreenState extends State<TerminalScreen> with SingleTickerProvid
           decoration: const BoxDecoration(color: AxColors.s1, border: Border(bottom: BorderSide(color: AxColors.line))),
           child: Row(
             children: [
-              for (var i = 0; i < termSessions.length; i++) _TermTab(session: termSessions[i], selected: i == _tab, onTap: () => setState(() => _tab = i)),
+              for (var i = 0; i < _sessions.length; i++)
+                _TermTab(
+                  session: _sessions[i],
+                  selected: i == _tab,
+                  onTap: () => setState(() => _tab = i),
+                  onClose: () => _closeSession(i),
+                ),
               const SizedBox(width: 5),
-              Icon(Icons.add_rounded, size: 16, color: AxColors.fg3),
+              GestureDetector(
+                onTap: () => _openSession(backend),
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+                  child: Icon(Icons.add_rounded, size: 16, color: AxColors.fg3),
+                ),
+              ),
               const Spacer(),
               Padding(
-                padding: const EdgeInsets.only(bottom: 7),
-                child: Text(session.meta, style: AxTextStyles.mono.copyWith(fontSize: 10, color: AxColors.fg3)),
+                padding: const EdgeInsets.only(bottom: 7, right: 4),
+                child: Text(backend.host ?? '', style: AxTextStyles.mono.copyWith(fontSize: 10, color: AxColors.fg3)),
               ),
             ],
           ),
         ),
-        Expanded(
-          child: Container(
-            width: double.infinity,
-            color: const Color(0xFF070807),
-            padding: const EdgeInsets.fromLTRB(16, 14, 16, 18),
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  for (final l in session.lines)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 0),
-                      child: Text(
-                        l[0],
-                        style: AxTextStyles.mono.copyWith(
-                          fontSize: 12,
-                          height: 1.66,
-                          fontWeight: l[1] == 'p' ? FontWeight.w500 : FontWeight.w400,
-                          color: l[1] == 'p' ? AxColors.accent : (l[1] == 'h' ? AxColors.fg2 : AxColors.fg),
-                        ),
-                      ),
-                    ),
-                  Row(
-                    children: [
-                      Text(session.prompt, style: AxTextStyles.mono.copyWith(fontSize: 12, fontWeight: FontWeight.w500, color: AxColors.accent)),
-                      FadeTransition(
-                        opacity: _cursor.drive(TweenSequence([
-                          TweenSequenceItem(tween: ConstantTween(1.0), weight: 49),
-                          TweenSequenceItem(tween: ConstantTween(0.0), weight: 51),
-                        ])),
-                        child: Container(width: 7.4, height: 15, margin: const EdgeInsets.only(left: 2), color: AxColors.accent),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
+        Expanded(child: _LivePane(key: ValueKey(_sessions[_tab]), session: _sessions[_tab])),
       ],
     );
   }
 }
 
 class _TermTab extends StatelessWidget {
-  final TermSession session;
+  final TerminalSession session;
   final bool selected;
   final VoidCallback onTap;
-  const _TermTab({required this.session, required this.selected, required this.onTap});
+  final VoidCallback onClose;
+  const _TermTab({required this.session, required this.selected, required this.onTap, required this.onClose});
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: AxMotion.base,
-        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 7),
-        margin: const EdgeInsets.only(right: 2),
-        decoration: BoxDecoration(
-          color: selected ? const Color(0xFF070807) : Colors.transparent,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(10)),
+    return ListenableBuilder(
+      listenable: session,
+      builder: (context, _) {
+        final dot = switch (session.status) {
+          SessionStatus.connected => AxColors.accent,
+          SessionStatus.connecting => AxColors.warn,
+          SessionStatus.error => AxColors.bad,
+          SessionStatus.closed => AxColors.fg3,
+        };
+        return GestureDetector(
+          onTap: onTap,
+          child: AnimatedContainer(
+            duration: AxMotion.base,
+            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
+            margin: const EdgeInsets.only(right: 2),
+            decoration: BoxDecoration(
+              color: selected ? const Color(0xFF070807) : Colors.transparent,
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(10)),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(width: 5, height: 5, decoration: BoxDecoration(color: dot, shape: BoxShape.circle)),
+                const SizedBox(width: 7),
+                Text(session.label, style: AxTextStyles.mono.copyWith(fontSize: 11.5, color: selected ? AxColors.fg : AxColors.fg3)),
+                const SizedBox(width: 7),
+                GestureDetector(
+                  onTap: onClose,
+                  child: Icon(Icons.close_rounded, size: 12, color: AxColors.fg3),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Renders one session's raw output and captures keystrokes to send as
+/// stdin. Output is unprocessed text (no ANSI/cursor-movement handling) -
+/// see TerminalSession's doc comment for why that's the deliberate scope
+/// here.
+class _LivePane extends StatefulWidget {
+  final TerminalSession session;
+  const _LivePane({super.key, required this.session});
+
+  @override
+  State<_LivePane> createState() => _LivePaneState();
+}
+
+class _LivePaneState extends State<_LivePane> {
+  final _scroll = ScrollController();
+  final _focus = FocusNode();
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    _focus.dispose();
+    super.dispose();
+  }
+
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scroll.hasClients) return;
+      _scroll.jumpTo(_scroll.position.maxScrollExtent);
+    });
+  }
+
+  KeyEventResult _onKey(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return KeyEventResult.ignored;
+
+    final key = event.logicalKey;
+    String? toSend;
+    if (key == LogicalKeyboardKey.enter || key == LogicalKeyboardKey.numpadEnter) {
+      toSend = '\r';
+    } else if (key == LogicalKeyboardKey.backspace) {
+      toSend = '\x7f';
+    } else if (key == LogicalKeyboardKey.tab) {
+      toSend = '\t';
+    } else if (key == LogicalKeyboardKey.escape) {
+      toSend = '\x1b';
+    } else if (key == LogicalKeyboardKey.arrowUp) {
+      toSend = '\x1b[A';
+    } else if (key == LogicalKeyboardKey.arrowDown) {
+      toSend = '\x1b[B';
+    } else if (key == LogicalKeyboardKey.arrowRight) {
+      toSend = '\x1b[C';
+    } else if (key == LogicalKeyboardKey.arrowLeft) {
+      toSend = '\x1b[D';
+    } else if (key == LogicalKeyboardKey.keyC && HardwareKeyboard.instance.isControlPressed) {
+      toSend = '\x03'; // Ctrl+C
+    } else if (key == LogicalKeyboardKey.keyD && HardwareKeyboard.instance.isControlPressed) {
+      toSend = '\x04'; // Ctrl+D
+    } else if (event.character != null && event.character!.isNotEmpty) {
+      toSend = event.character;
+    }
+
+    if (toSend != null) {
+      widget.session.sendInput(toSend);
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: widget.session,
+      builder: (context, _) {
+        _scrollToBottom();
+        return Focus(
+          focusNode: _focus,
+          autofocus: true,
+          onKeyEvent: _onKey,
+          child: GestureDetector(
+            onTap: () => _focus.requestFocus(),
+            child: Container(
+              width: double.infinity,
+              color: const Color(0xFF070807),
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 18),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (widget.session.status == SessionStatus.error)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Text(
+                        widget.session.error ?? 'Connection error',
+                        style: AxTextStyles.mono.copyWith(fontSize: 12, color: AxColors.bad),
+                      ),
+                    ),
+                  if (widget.session.status == SessionStatus.connecting)
+                    Text('connecting…', style: AxTextStyles.mono.copyWith(fontSize: 12, color: AxColors.fg3)),
+                  Expanded(
+                    child: SingleChildScrollView(
+                      controller: _scroll,
+                      child: SelectableText(
+                        widget.session.output,
+                        style: AxTextStyles.mono.copyWith(fontSize: 12, height: 1.5, color: AxColors.fg),
+                      ),
+                    ),
+                  ),
+                  if (widget.session.status == SessionStatus.closed)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 6),
+                      child: Text(
+                        'session ended${widget.session.exitCode != null ? " (exit ${widget.session.exitCode})" : ""}',
+                        style: AxTextStyles.mono.copyWith(fontSize: 11, color: AxColors.fg3),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _UnpairedPrompt extends StatelessWidget {
+  final VoidCallback onPaired;
+  const _UnpairedPrompt({required this.onPaired});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 420),
+        child: AxCard(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('No backend paired', style: AxTextStyles.sans.copyWith(fontSize: 14, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 6),
+              Text(
+                'Terminal needs archangeld\'s host and auth token (from `archangeld gen-token` on the server) to open a real shell session.',
+                style: AxTextStyles.sans.copyWith(fontSize: 12.5, color: AxColors.fg2, height: 1.5),
+              ),
+              const SizedBox(height: 14),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: GestureDetector(
+                  onTap: () => _showPairDialog(context, onPaired),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 7),
+                    decoration: BoxDecoration(
+                      color: AxColors.wash,
+                      borderRadius: BorderRadius.circular(AxRadius.pill),
+                      border: Border.all(color: AxColors.accent.withValues(alpha: 0.22)),
+                    ),
+                    child: Text('Pair backend', style: AxTextStyles.sans.copyWith(fontSize: 12, fontWeight: FontWeight.w700, color: AxColors.accent)),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(width: 5, height: 5, decoration: BoxDecoration(color: session.dot, shape: BoxShape.circle)),
-            const SizedBox(width: 7),
-            Text(session.label, style: AxTextStyles.mono.copyWith(fontSize: 11.5, color: selected ? AxColors.fg : AxColors.fg3)),
+      ),
+    );
+  }
+
+  void _showPairDialog(BuildContext context, VoidCallback onPaired) {
+    final backend = context.read<ArchangeldConnection>();
+    final hostController = TextEditingController(text: '10.8.0.1:8443');
+    final tokenController = TextEditingController();
+    String? error;
+    showDialog<void>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          backgroundColor: AxColors.s2,
+          title: Text('Pair backend', style: AxTextStyles.sans.copyWith(fontSize: 15, fontWeight: FontWeight.w700)),
+          content: SizedBox(
+            width: 380,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Host : port', style: AxTextStyles.sans.copyWith(fontSize: 11, color: AxColors.fg3)),
+                const SizedBox(height: 4),
+                TextField(
+                  controller: hostController,
+                  style: AxTextStyles.mono.copyWith(fontSize: 12.5),
+                  decoration: InputDecoration(
+                    filled: true,
+                    fillColor: AxColors.s1,
+                    hintText: '10.8.0.1:8443',
+                    hintStyle: AxTextStyles.mono.copyWith(fontSize: 12, color: AxColors.fg3),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+                    isDense: true,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text('Auth token', style: AxTextStyles.sans.copyWith(fontSize: 11, color: AxColors.fg3)),
+                const SizedBox(height: 4),
+                TextField(
+                  controller: tokenController,
+                  obscureText: true,
+                  style: AxTextStyles.mono.copyWith(fontSize: 12.5),
+                  decoration: InputDecoration(
+                    filled: true,
+                    fillColor: AxColors.s1,
+                    hintText: 'from: archangeld gen-token',
+                    hintStyle: AxTextStyles.mono.copyWith(fontSize: 12, color: AxColors.fg3),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+                    isDense: true,
+                  ),
+                ),
+                if (error != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(error!, style: AxTextStyles.mono.copyWith(fontSize: 11, color: AxColors.bad)),
+                  ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+            TextButton(
+              onPressed: () async {
+                try {
+                  await backend.pair(host: hostController.text, token: tokenController.text);
+                  if (context.mounted) Navigator.of(context).pop();
+                  onPaired();
+                } on FormatException catch (e) {
+                  setState(() => error = e.message);
+                }
+              },
+              child: const Text('Pair'),
+            ),
           ],
         ),
       ),

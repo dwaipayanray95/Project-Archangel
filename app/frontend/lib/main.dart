@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'data/app_state.dart';
+import 'services/archangeld_connection.dart';
 import 'services/wireguard_controller.dart';
 import 'theme/app_theme.dart';
 import 'widgets/app_shell.dart';
@@ -25,6 +26,7 @@ class ArchangelApp extends StatelessWidget {
       providers: [
         ChangeNotifierProvider(create: (_) => AppState()),
         ChangeNotifierProvider(create: (_) => WireGuardController()..bootstrap()),
+        ChangeNotifierProvider(create: (_) => ArchangeldConnection()..load()),
       ],
       child: Consumer<AppState>(
         builder: (context, app, _) => MaterialApp(
