@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../data/app_state.dart';
+import '../services/wireguard_controller.dart';
 import '../theme/tokens.dart';
 import 'ax_widgets.dart';
 
@@ -17,7 +18,22 @@ class TopBar extends StatelessWidget implements PreferredSizeWidget {
   @override
   Widget build(BuildContext context) {
     final app = context.watch<AppState>();
+    final wg = context.watch<WireGuardController>();
     final accent = app.accent;
+    final tunnelColor = switch (wg.status) {
+      TunnelStatus.connected => accent,
+      TunnelStatus.connecting || TunnelStatus.disconnecting => AxColors.warn,
+      TunnelStatus.error || TunnelStatus.unsupported => AxColors.bad,
+      TunnelStatus.disconnected => AxColors.fg3,
+    };
+    final tunnelLabel = switch (wg.status) {
+      TunnelStatus.connected => 'wg0',
+      TunnelStatus.connecting => 'connecting',
+      TunnelStatus.disconnecting => 'disconnecting',
+      TunnelStatus.error => 'error',
+      TunnelStatus.unsupported => 'unsupported',
+      TunnelStatus.disconnected => 'wg0 down',
+    };
 
     return Container(
       height: 48,
@@ -45,19 +61,19 @@ class TopBar extends StatelessWidget implements PreferredSizeWidget {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
             decoration: BoxDecoration(
-              color: AxColors.wash,
+              color: tunnelColor.withValues(alpha: 0.11),
               borderRadius: BorderRadius.circular(AxRadius.pill),
-              border: Border.all(color: accent.withValues(alpha: 0.18)),
+              border: Border.all(color: tunnelColor.withValues(alpha: 0.18)),
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                StatusDot(color: accent, size: 6, pulse: true),
+                StatusDot(color: tunnelColor, size: 6, pulse: wg.status == TunnelStatus.connected),
                 const SizedBox(width: 7),
-                Text('wg0', style: AxTextStyles.mono.copyWith(fontSize: 10.5, fontWeight: FontWeight.w500, color: accent)),
-                if (wide) ...[
+                Text(tunnelLabel, style: AxTextStyles.mono.copyWith(fontSize: 10.5, fontWeight: FontWeight.w500, color: tunnelColor)),
+                if (wide && wg.config != null) ...[
                   const SizedBox(width: 6),
-                  Text('10.8.0.1', style: AxTextStyles.mono.copyWith(fontSize: 10.5, color: AxColors.fg3)),
+                  Text(wg.config!.interfaceAddress, style: AxTextStyles.mono.copyWith(fontSize: 10.5, color: AxColors.fg3)),
                 ],
               ],
             ),

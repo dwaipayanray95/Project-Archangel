@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../data/app_state.dart';
+import '../services/tunnel_config.dart';
+import '../services/wireguard_controller.dart';
 import '../theme/tokens.dart';
 import '../widgets/ax_widgets.dart';
 
@@ -10,13 +12,6 @@ class SettingsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final app = context.watch<AppState>();
-    final tunnelRows = const [
-      ['Interface', 'wg0'],
-      ['Address', '10.8.0.1/24'],
-      ['Endpoint', '84.22.19.7:51820'],
-      ['Latest handshake', '41 seconds ago'],
-      ['Transfer', '1.42 GiB / 8.19 GiB'],
-    ];
     final aboutRows = const [
       ['Agent', 'archangeld 0.9.4'],
       ['Host', 'Archangel-MK1'],
@@ -39,42 +34,7 @@ class SettingsScreen extends StatelessWidget {
               final left = Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  AxCard(
-                    padding: const EdgeInsets.all(15),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Row(
-                          children: [
-                            Text('Tunnel', style: AxTextStyles.sans.copyWith(fontSize: 12.5, fontWeight: FontWeight.w700)),
-                            const Spacer(),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 2),
-                              decoration: BoxDecoration(color: AxColors.wash, borderRadius: BorderRadius.circular(AxRadius.pill)),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  const StatusDot(color: AxColors.accent, size: 5, pulse: true),
-                                  const SizedBox(width: 6),
-                                  Text('wg0 up', style: AxTextStyles.mono.copyWith(fontSize: 10, fontWeight: FontWeight.w500, color: AxColors.accent)),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 4),
-                        for (final r in tunnelRows) _KvRow(r[0], r[1]),
-                        const SizedBox(height: 12),
-                        Row(
-                          children: const [
-                            _FilledPill(label: 'Reconnect'),
-                            SizedBox(width: 7),
-                            AxGhostButton(label: 'View config'),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
+                  const _TunnelCard(),
                   const SizedBox(height: 11),
                   AxCard(
                     padding: const EdgeInsets.all(15),
@@ -233,14 +193,182 @@ class _TokenRow extends StatelessWidget {
 
 class _FilledPill extends StatelessWidget {
   final String label;
-  const _FilledPill({required this.label});
+  final VoidCallback? onTap;
+  const _FilledPill({required this.label, this.onTap});
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    final pill = Container(
       padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 6),
       decoration: BoxDecoration(color: AxColors.wash, borderRadius: BorderRadius.circular(AxRadius.pill), border: Border.all(color: AxColors.accent.withValues(alpha: 0.22))),
       child: Text(label, style: AxTextStyles.sans.copyWith(fontSize: 11.5, fontWeight: FontWeight.w700, color: AxColors.accent)),
+    );
+    return onTap == null ? pill : GestureDetector(onTap: onTap, child: pill);
+  }
+}
+
+/// The Tunnel card on Settings: real WireGuard state (via
+/// [WireGuardController]), pair/unpair, connect/disconnect, view config.
+class _TunnelCard extends StatelessWidget {
+  const _TunnelCard();
+
+  @override
+  Widget build(BuildContext context) {
+    final wg = context.watch<WireGuardController>();
+    final statusColor = switch (wg.status) {
+      TunnelStatus.connected => AxColors.accent,
+      TunnelStatus.connecting || TunnelStatus.disconnecting => AxColors.warn,
+      TunnelStatus.error || TunnelStatus.unsupported => AxColors.bad,
+      TunnelStatus.disconnected => AxColors.fg3,
+    };
+    final statusLabel = switch (wg.status) {
+      TunnelStatus.connected => 'wg0 up',
+      TunnelStatus.connecting => 'connecting…',
+      TunnelStatus.disconnecting => 'disconnecting…',
+      TunnelStatus.error => 'error',
+      TunnelStatus.unsupported => 'unsupported here',
+      TunnelStatus.disconnected => 'wg0 down',
+    };
+
+    final cfg = wg.config;
+    final rows = cfg == null
+        ? const <List<String>>[]
+        : [
+            ['Interface', cfg.interfaceAddress],
+            ['Endpoint', cfg.peerEndpoint],
+            ['Allowed IPs', cfg.peerAllowedIps],
+            if (cfg.interfaceDns != null) ['DNS', cfg.interfaceDns!],
+          ];
+
+    return AxCard(
+      padding: const EdgeInsets.all(15),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Text('Tunnel', style: AxTextStyles.sans.copyWith(fontSize: 12.5, fontWeight: FontWeight.w700)),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 2),
+                decoration: BoxDecoration(color: statusColor.withValues(alpha: 0.14), borderRadius: BorderRadius.circular(AxRadius.pill)),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    StatusDot(color: statusColor, size: 5, pulse: wg.status == TunnelStatus.connected),
+                    const SizedBox(width: 6),
+                    Text(statusLabel, style: AxTextStyles.mono.copyWith(fontSize: 10, fontWeight: FontWeight.w500, color: statusColor)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          if (cfg == null)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Text('No device paired yet.', style: AxTextStyles.sans.copyWith(fontSize: 11.5, color: AxColors.fg2)),
+            )
+          else
+            for (final r in rows) _KvRow(r[0], r[1]),
+          if (wg.lastError != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(wg.lastError!, style: AxTextStyles.mono.copyWith(fontSize: 10.5, color: AxColors.bad)),
+            ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              if (cfg == null)
+                _FilledPill(label: 'Pair device', onTap: () => _showPairDialog(context, wg))
+              else ...[
+                _FilledPill(
+                  label: wg.status == TunnelStatus.connected ? 'Disconnect' : 'Reconnect',
+                  onTap: wg.status == TunnelStatus.connected ? wg.disconnect : wg.connect,
+                ),
+                const SizedBox(width: 7),
+                AxGhostButton(label: 'View config', onTap: () => _showConfigDialog(context, cfg)),
+                const SizedBox(width: 7),
+                AxGhostButton(label: 'Unpair', color: AxColors.bad, onTap: () => wg.unpair()),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showConfigDialog(BuildContext context, TunnelConfig cfg) {
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AxColors.s2,
+        title: Text('Tunnel config', style: AxTextStyles.sans.copyWith(fontSize: 15, fontWeight: FontWeight.w700)),
+        content: SelectableText(
+          cfg.toWgQuickConfig().replaceFirst(cfg.interfacePrivateKey, '••••••••••••••••••••••••••••••••••••••••••'),
+          style: AxTextStyles.mono.copyWith(fontSize: 12, height: 1.6),
+        ),
+        actions: [TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Close'))],
+      ),
+    );
+  }
+
+  void _showPairDialog(BuildContext context, WireGuardController wg) {
+    final controller = TextEditingController();
+    String? error;
+    showDialog<void>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          backgroundColor: AxColors.s2,
+          title: Text('Pair device', style: AxTextStyles.sans.copyWith(fontSize: 15, fontWeight: FontWeight.w700)),
+          content: SizedBox(
+            width: 460,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Paste the wg-quick config archangeld generated for this device.',
+                  style: AxTextStyles.sans.copyWith(fontSize: 12, color: AxColors.fg2),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: controller,
+                  maxLines: 10,
+                  style: AxTextStyles.mono.copyWith(fontSize: 12),
+                  decoration: InputDecoration(
+                    filled: true,
+                    fillColor: AxColors.s1,
+                    hintText: '[Interface]\nPrivateKey = ...\nAddress = ...\n\n[Peer]\nPublicKey = ...\nEndpoint = ...',
+                    hintStyle: AxTextStyles.mono.copyWith(fontSize: 11, color: AxColors.fg3),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+                  ),
+                ),
+                if (error != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(error!, style: AxTextStyles.mono.copyWith(fontSize: 11, color: AxColors.bad)),
+                  ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+            TextButton(
+              onPressed: () async {
+                try {
+                  await wg.pair(controller.text);
+                  if (context.mounted) Navigator.of(context).pop();
+                } on FormatException catch (e) {
+                  setState(() => error = e.message);
+                }
+              },
+              child: const Text('Pair'),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
