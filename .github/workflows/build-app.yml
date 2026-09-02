@@ -1,0 +1,207 @@
+name: Build Archangel
+
+# Manual, pick-and-choose build. Every target defaults to off so a run only
+# builds what you actually ask for; "all" is a shortcut that overrides the
+# individual checkboxes rather than a fifth separate target to keep in sync.
+on:
+  workflow_dispatch:
+    inputs:
+      macos:
+        description: "macOS app (Archangel.app)"
+        type: boolean
+        default: false
+      windows:
+        description: "Windows app (.exe + runtime)"
+        type: boolean
+        default: false
+      android:
+        description: "Android app (.apk)"
+        type: boolean
+        default: false
+      backend:
+        description: "Backend binaries (archangeld, amd64 + arm64)"
+        type: boolean
+        default: false
+      all:
+        description: "Build everything above, regardless of the other checkboxes"
+        type: boolean
+        default: false
+
+env:
+  FLUTTER_VERSION: "3.29.3"
+  GO_VERSION: "1.24"
+
+jobs:
+  # Resolves "all" into per-target flags once so every build job below has a
+  # single simple `if:` condition instead of repeating the OR everywhere.
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      macos: ${{ steps.resolve.outputs.macos }}
+      windows: ${{ steps.resolve.outputs.windows }}
+      android: ${{ steps.resolve.outputs.android }}
+      backend: ${{ steps.resolve.outputs.backend }}
+    steps:
+      - id: resolve
+        run: |
+          all="${{ inputs.all }}"
+          echo "macos=$([ "$all" = "true" ] && echo true || echo "${{ inputs.macos }}")" >> "$GITHUB_OUTPUT"
+          echo "windows=$([ "$all" = "true" ] && echo true || echo "${{ inputs.windows }}")" >> "$GITHUB_OUTPUT"
+          echo "android=$([ "$all" = "true" ] && echo true || echo "${{ inputs.android }}")" >> "$GITHUB_OUTPUT"
+          echo "backend=$([ "$all" = "true" ] && echo true || echo "${{ inputs.backend }}")" >> "$GITHUB_OUTPUT"
+
+  build-macos:
+    needs: plan
+    if: needs.plan.outputs.macos == 'true'
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: app/frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      # Flutter/Dart package cache, keyed off pubspec.lock so it invalidates
+      # only when dependencies actually change.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.pub-cache
+            app/frontend/.dart_tool
+          key: ${{ runner.os }}-pub-${{ hashFiles('app/frontend/pubspec.lock') }}
+          restore-keys: ${{ runner.os }}-pub-
+
+      - run: flutter config --enable-macos-desktop
+      - run: flutter pub get
+      - run: flutter build macos --release
+
+      - name: Zip the .app bundle
+        working-directory: app/frontend/build/macos/Build/Products/Release
+        run: ditto -c -k --sequesterRsrc --keepParent Archangel.app Archangel-macos.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: archangel-macos
+          path: app/frontend/build/macos/Build/Products/Release/Archangel-macos.zip
+          retention-days: 30
+
+  build-windows:
+    needs: plan
+    if: needs.plan.outputs.windows == 'true'
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: app/frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/AppData/Local/Pub/Cache
+            app/frontend/.dart_tool
+          key: ${{ runner.os }}-pub-${{ hashFiles('app/frontend/pubspec.lock') }}
+          restore-keys: ${{ runner.os }}-pub-
+
+      - run: flutter config --enable-windows-desktop
+      - run: flutter pub get
+      - run: flutter build windows --release
+
+      - name: Zip the release folder
+        working-directory: app/frontend/build/windows/x64/runner/Release
+        run: Compress-Archive -Path * -DestinationPath ../../../../../Archangel-windows.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: archangel-windows
+          path: app/frontend/build/Archangel-windows.zip
+          retention-days: 30
+
+  build-android:
+    needs: plan
+    if: needs.plan.outputs.android == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app/frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.pub-cache
+            app/frontend/.dart_tool
+          key: ${{ runner.os }}-pub-${{ hashFiles('app/frontend/pubspec.lock') }}
+          restore-keys: ${{ runner.os }}-pub-
+
+      # Gradle cache: wrapper distribution + downloaded deps, keyed off the
+      # wrapper version and every gradle file so a dependency bump still
+      # invalidates it correctly.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('app/frontend/android/**/*.gradle*', 'app/frontend/android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: ${{ runner.os }}-gradle-
+
+      - run: flutter pub get
+      - run: flutter build apk --release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: archangel-android
+          path: app/frontend/build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 30
+
+  build-backend:
+    needs: plan
+    if: needs.plan.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app/backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: app/backend/go.sum
+
+      - run: go vet ./...
+      - run: go test ./...
+      - run: make build-linux-amd64
+      - run: make build-linux-arm64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: archangeld-binaries
+          path: |
+            app/backend/bin/archangeld-amd64
+            app/backend/bin/archangeld-arm64
+          retention-days: 30
