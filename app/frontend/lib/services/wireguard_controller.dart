@@ -154,12 +154,17 @@ class WireGuardController extends ChangeNotifier {
       return;
     }
 
+    _status = TunnelStatus.connecting;
+    notifyListeners();
     try {
       await _wg.startVpn(
         serverAddress: cfg.serverAddress,
         wgQuickConfig: cfg.toWgQuickConfig(),
         providerBundleIdentifier: _kProviderBundleId,
       );
+      // vpnStageSnapshot (subscribed in bootstrap()) takes it from here -
+      // this optimistic update just avoids a stale status between the
+      // call above returning and the stream's first real update arriving.
     } catch (e) {
       _status = TunnelStatus.error;
       _lastError = e.toString();

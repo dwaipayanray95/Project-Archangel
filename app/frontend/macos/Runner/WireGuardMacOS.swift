@@ -150,7 +150,18 @@ class WireGuardMacOS: NSObject {
 
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { throw WGMacError.message("Could not create UAPI socket") }
-        defer { self.uapiSocketFD = fd }
+        // Tracked from creation so disconnect() can always close it, but
+        // closed and untracked again below on any failure - configuration
+        // can fail well after this point (connect, write, or a rejected
+        // config), and a socket that never got a working UAPI session on
+        // it has nothing worth keeping open until the next connect/
+        // disconnect call happens to clean it up.
+        self.uapiSocketFD = fd
+        func fail(_ message: String) -> WGMacError {
+            close(fd)
+            self.uapiSocketFD = -1
+            return .message(message)
+        }
 
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
@@ -167,31 +178,37 @@ class WireGuardMacOS: NSObject {
             }
         }
         guard connectResult == 0 else {
-            throw WGMacError.message("Could not connect to wireguard-go's UAPI socket at \(socketPath)")
+            throw fail("Could not connect to wireguard-go's UAPI socket at \(socketPath)")
         }
 
-        var message = "set=1\n"
-        message += "private_key=\(try WGConfig.base64KeyToHex(config.privateKey))\n"
-        message += "replace_peers=true\n"
-        message += "public_key=\(try WGConfig.base64KeyToHex(config.peerPublicKey))\n"
-        message += "endpoint=\(try WGConfig.resolveEndpoint(config.peerEndpoint))\n"
-        if let keepalive = config.persistentKeepalive {
-            message += "persistent_keepalive_interval=\(keepalive)\n"
+        let message: String
+        do {
+            var m = "set=1\n"
+            m += "private_key=\(try WGConfig.base64KeyToHex(config.privateKey))\n"
+            m += "replace_peers=true\n"
+            m += "public_key=\(try WGConfig.base64KeyToHex(config.peerPublicKey))\n"
+            m += "endpoint=\(try WGConfig.resolveEndpoint(config.peerEndpoint))\n"
+            if let keepalive = config.persistentKeepalive {
+                m += "persistent_keepalive_interval=\(keepalive)\n"
+            }
+            m += "replace_allowed_ips=true\n"
+            for cidr in config.allowedIps {
+                m += "allowed_ip=\(cidr)\n"
+            }
+            m += "\n"
+            message = m
+        } catch WGMacError.message(let msg) {
+            throw fail(msg)
         }
-        message += "replace_allowed_ips=true\n"
-        for cidr in config.allowedIps {
-            message += "allowed_ip=\(cidr)\n"
-        }
-        message += "\n"
 
         let sent = message.withCString { write(fd, $0, strlen($0)) }
-        guard sent > 0 else { throw WGMacError.message("Failed writing UAPI config") }
+        guard sent > 0 else { throw fail("Failed writing UAPI config") }
 
         var buf = [UInt8](repeating: 0, count: 4096)
         let n = read(fd, &buf, buf.count)
         let response = n > 0 ? String(decoding: buf[0..<n], as: UTF8.self) : ""
         if !response.contains("errno=0") && !response.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            throw WGMacError.message("wireguard-go rejected the config: \(response)")
+            throw fail("wireguard-go rejected the config: \(response)")
         }
     }
 
