@@ -21,7 +21,9 @@ const _kStorageKey = 'wg_tunnel_config';
 /// requires a value regardless.
 const _kProviderBundleId = 'dev.archangel.archangel.tunnel';
 
-const _secureStorage = FlutterSecureStorage();
+const _secureStorage = FlutterSecureStorage(
+  mOptions: MacOsOptions(usesDataProtectionKeychain: false),
+);
 
 /// Wraps the platform's WireGuard backend behind a small app-specific API:
 /// load/save the paired config, connect/disconnect, and a status stream

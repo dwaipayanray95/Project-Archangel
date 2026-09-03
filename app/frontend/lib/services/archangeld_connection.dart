@@ -3,7 +3,9 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 const _kHostKey = 'archangeld_host';
 const _kTokenKey = 'archangeld_token';
-const _secureStorage = FlutterSecureStorage();
+const _secureStorage = FlutterSecureStorage(
+  mOptions: MacOsOptions(usesDataProtectionKeychain: false),
+);
 
 /// The archangeld connection details: host:port (reachable only over the
 /// WireGuard tunnel - see WIREGUARD.md) and the single auth token from
