@@ -54,6 +54,16 @@ wasn't something this Linux sandbox could cross-compile).
    were in process lifecycle management around it, not the WireGuard
    protocol handling itself.
 
+**Second real-hardware run** (after the above fix) got further — the
+socket now reliably appears — but failed with `Could not connect to
+wireguard-go's UAPI socket at /var/run/wireguard/utun17.sock`: `wireguard-go`
+runs as root and creates both that directory and the socket root-owned,
+while this app's own `connect()` call to it runs as the logged-in user —
+a straightforward permission denial, not a missing-file issue (the
+`waitForUapiSocket` existence check had already passed). Fixed with
+`relaxUapiSocketPermissions()`, an elevated `chmod` run right after the
+socket appears and before connecting to it. Not yet retested.
+
 **Still-open item, not yet touched:**
 - Routing: only the interface's own address is configured
   (`bringUpInterface`) — `AllowedIPs` beyond the tunnel's own address

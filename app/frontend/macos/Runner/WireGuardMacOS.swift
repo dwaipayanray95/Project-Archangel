@@ -33,8 +33,12 @@
 //      process it launched - every connect attempt leaked a permanent
 //      root process. Fixed to kill the real PID (plus an exact-match
 //      pkill fallback) via the same elevated-privileges path.
-// Next step is rebuilding and retesting this exact fix on real hardware -
-// treat it as unverified until that happens, same as the first version.
+// A SECOND real-hardware run (after fixing the above) got further - the
+// socket now reliably appears - but failed to connect() to it: wireguard-go
+// (root) creates /var/run/wireguard/ and the socket itself root-owned, and
+// this process's own connect() call runs as the logged-in user, not root.
+// Fixed with relaxUapiSocketPermissions() (an elevated chmod) right after
+// the socket appears, before connecting to it. Not yet retested.
 import Cocoa
 import FlutterMacOS
 import Darwin
@@ -126,8 +130,30 @@ class WireGuardMacOS: NSObject {
         self.wgPID = try? readPID(pidPath: pidPath)
 
         try waitForUapiSocket(ifname: ifname, logPath: logPath, timeout: 5.0)
+        // wireguard-go (running as root) creates both /var/run/wireguard/
+        // and the socket itself as root-owned - our own connect() call
+        // below runs as the logged-in user, not root, so without this it
+        // fails with a plain "could not connect" (a permission failure,
+        // not a missing-file one; the socket already exists by this
+        // point). Single elevated call, reusing the same admin-privileges
+        // path everything else here already needs.
+        try relaxUapiSocketPermissions(ifname: ifname)
         try configureViaUAPI(ifname: ifname, config: parsed)
         try bringUpInterface(ifname: ifname, address: parsed.address)
+    }
+
+    private func relaxUapiSocketPermissions(ifname: String) throws {
+        let cmd = "chmod 755 /var/run/wireguard && chmod 666 /var/run/wireguard/\(ifname).sock"
+        let escaped = cmd.replacingOccurrences(of: "\"", with: "\\\"")
+        let osascript = "do shell script \"\(escaped)\" with administrator privileges"
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        task.arguments = ["-e", osascript]
+        try task.run()
+        task.waitUntilExit()
+        guard task.terminationStatus == 0 else {
+            throw WGMacError.message("Could not relax permissions on wireguard-go's UAPI socket.")
+        }
     }
 
     /// Lists currently-existing utunN interfaces via `ifconfig -l` (a plain
