@@ -62,11 +62,25 @@ func main() {
 		slog.Warn("no auth tokens configured yet - every request will be rejected until a device is paired via `archangeld pair`")
 	}
 
+	// Re-reads tokens.json from disk on every check rather than trusting
+	// the copy loaded at startup. `archangeld pair` runs as a one-shot CLI
+	// command against the *file*, completely independent of this
+	// long-running process - without this, every device paired while the
+	// server is already running (i.e. every real-world use of `pair`)
+	// would 401 until the service was manually restarted. This is a tiny
+	// JSON file checked at most once per new WebSocket/request, so the
+	// extra disk read is not worth the complexity of a cache + reload
+	// signal for a single-user personal tool.
 	verify := auth.Verifier(func(hash string) bool {
 		if cfg.TokenHash != "" && subtle.ConstantTimeCompare([]byte(hash), []byte(cfg.TokenHash)) == 1 {
 			return true
 		}
-		return store.IsValid(hash)
+		current, err := tokenstore.Load(cfg.TokenStorePath)
+		if err != nil {
+			slog.Error("failed to reload token store", "err", err)
+			return store.IsValid(hash) // fall back to the startup snapshot rather than locking everyone out
+		}
+		return current.IsValid(hash)
 	})
 
 	router := api.NewRouter(verify)
