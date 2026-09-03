@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"syscall"
 	"time"
 )
 
@@ -78,18 +79,51 @@ func (s *Store) save() error {
 		return fmt.Errorf("encoding token store: %w", err)
 	}
 
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
+	dir := filepath.Dir(s.path)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return fmt.Errorf("creating token store dir: %w", err)
 	}
 
 	// Write to a temp file and rename over the real path so a crash
 	// mid-write can never leave a truncated/corrupt store behind.
 	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+	// 0640 (not 0600): `archangeld pair` runs as root (via sudo), but the
+	// long-running server process runs as the unprivileged `archangel`
+	// system user - a root-only file would be unreadable to it, which is
+	// exactly what happened on real hardware (server failed to start with
+	// "permission denied" after the first `pair` call). Group-readable,
+	// plus chownGroupToMatch below matching the parent directory's group
+	// (deploy.sh sets that to the `archangel` group), lets the service
+	// read this without making it world-readable.
+	if err := os.WriteFile(tmp, data, 0o640); err != nil {
 		return fmt.Errorf("writing token store: %w", err)
+	}
+	if err := chownGroupToMatch(tmp, dir); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("setting token store group ownership: %w", err)
 	}
 	if err := os.Rename(tmp, s.path); err != nil {
 		return fmt.Errorf("saving token store: %w", err)
+	}
+	return nil
+}
+
+// chownGroupToMatch sets path's group ownership to match dir's, leaving
+// the owner (uid) untouched. When `pair` runs via sudo, that owner stays
+// root - fine, since group-read (0640) is what the archangeld service
+// actually needs. A no-op, non-fatal warning path on non-Unix platforms
+// doesn't apply here: this package only ever runs on the Linux server.
+func chownGroupToMatch(path, dir string) error {
+	info, err := os.Stat(dir)
+	if err != nil {
+		return fmt.Errorf("stat %s: %w", dir, err)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return fmt.Errorf("could not read %s's group ownership", dir)
+	}
+	if err := os.Chown(path, -1, int(stat.Gid)); err != nil {
+		return fmt.Errorf("chown %s to group %d: %w", path, stat.Gid, err)
 	}
 	return nil
 }
