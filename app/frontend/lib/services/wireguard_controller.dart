@@ -63,6 +63,13 @@ class WireGuardController extends ChangeNotifier {
 
   bool _initialized = false;
 
+  /// True once [bootstrap] has finished loading the saved config (whether
+  /// or not one exists) - lets the app's root router wait for this before
+  /// deciding whether to show the setup wizard, instead of flashing it
+  /// for an already-paired user while storage is still being read.
+  bool _bootstrapped = false;
+  bool get isBootstrapped => _bootstrapped;
+
   Future<void> bootstrap() async {
     if (_initialized) return;
     _initialized = true;
@@ -73,6 +80,7 @@ class WireGuardController extends ChangeNotifier {
       // No stage stream on this backend yet - status is set directly by
       // connect()/disconnect() below instead of an event stream.
       _status = TunnelStatus.disconnected;
+      _bootstrapped = true;
       notifyListeners();
       return;
     }
@@ -85,8 +93,9 @@ class WireGuardController extends ChangeNotifier {
       // Most commonly hit on Linux without wireguard-tools installed.
       _status = TunnelStatus.unsupported;
       _lastError = e.toString();
-      notifyListeners();
     }
+    _bootstrapped = true;
+    notifyListeners();
   }
 
   void _onStageChanged(VpnStage stage) {

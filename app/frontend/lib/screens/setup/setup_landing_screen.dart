@@ -1,0 +1,99 @@
+import 'package:flutter/material.dart';
+
+import '../../theme/tokens.dart';
+import '../../widgets/ax_widgets.dart';
+import '../../widgets/pairing_dialog.dart';
+import 'setup_wizard_screen.dart';
+
+/// First screen shown when neither the WireGuard tunnel nor the backend
+/// connection is paired: choose between bootstrapping a brand-new VPS
+/// (the setup wizard) or pairing this device to a server that's already
+/// running (the existing paste/QR dialog, unchanged) - so pairing a
+/// *second* device isn't forced through the wizard.
+class SetupLandingScreen extends StatelessWidget {
+  const SetupLandingScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AxColors.bg,
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 520),
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  'Archangel',
+                  style: AxTextStyles.sans.copyWith(fontSize: 28, fontWeight: FontWeight.w700, color: AxColors.fg),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Get your server connected.',
+                  style: AxTextStyles.sans.copyWith(fontSize: 14, color: AxColors.fg2),
+                ),
+                const SizedBox(height: 32),
+                AxCard(
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const SetupWizardScreen()),
+                  ),
+                  padding: const EdgeInsets.all(20),
+                  child: Row(
+                    children: [
+                      Icon(Icons.dns_outlined, color: AxColors.accent, size: 28),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('Set up a new server', style: AxTextStyles.sans.copyWith(fontSize: 15, fontWeight: FontWeight.w700)),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Point Archangel at a fresh VPS and an SSH key - it installs and pairs everything for you.',
+                              style: AxTextStyles.sans.copyWith(fontSize: 12.5, color: AxColors.fg2, height: 1.4),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Icon(Icons.chevron_right, color: AxColors.fg3),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                AxCard(
+                  onTap: () => showPairingDialog(context),
+                  padding: const EdgeInsets.all(20),
+                  child: Row(
+                    children: [
+                      Icon(Icons.qr_code_2, color: AxColors.fg2, size: 28),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('I already have a pairing code', style: AxTextStyles.sans.copyWith(fontSize: 15, fontWeight: FontWeight.w700)),
+                            const SizedBox(height: 4),
+                            Text(
+                              'From `archangeld pair` on a server that\'s already set up.',
+                              style: AxTextStyles.sans.copyWith(fontSize: 12.5, color: AxColors.fg2, height: 1.4),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Icon(Icons.chevron_right, color: AxColors.fg3),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
