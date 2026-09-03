@@ -74,13 +74,22 @@ no Windows toolchain. Everything below is real, complete code, but
    either platform yet. Expect friction — this is genuinely the first
    time this code has met a real toolchain for either. (macOS is now
    done — see above.)
-3. **archangeld has no pairing endpoint** — the app's "Pair backend" and
-   "Pair device" (WireGuard) dialogs require pasting host/token or a
-   wg-quick config by hand, because the backend has no `/api/v1/pair`-type
-   route yet (only Milestone 1: health + terminal are built server-side —
-   see `app/backend/README.md`). Files/Containers/Monitoring/DevOps
-   screens are still 100% mock data (`lib/data/mock_data.dart`) for the
-   same reason: no backend routes exist for them yet.
+3. ~~archangeld has no pairing endpoint~~ **Done**: `archangeld pair <name>
+   [--qr]` (a CLI subcommand, not an HTTP route - no HTTP round trip
+   through the tunnel is needed before the tunnel exists) generates a
+   WireGuard keypair, live-adds it as a peer, generates a per-device
+   token, and prints one bundle the app's single pairing dialog
+   (`lib/widgets/pairing_dialog.dart`) parses to configure both the tunnel
+   and the backend connection in one step - paste on any platform, scan a
+   QR code on Android. See `app/backend/internal/tokenstore`,
+   `internal/wgpeer`, and `lib/services/pairing_bundle.dart`. Not yet
+   tested against a real server in this pass - the `pair` subcommand and
+   the app's parser were built and unit-verified (`go build`/`go
+   test`/`flutter analyze`/`flutter test` all clean) but never run
+   together against a real WireGuard peer add. Files/Containers/
+   Monitoring/DevOps screens are still 100% mock data
+   (`lib/data/mock_data.dart`) - no backend routes exist for them yet,
+   pairing only covers the tunnel + terminal auth.
 4. **Terminal is not a full terminal emulator** — `TerminalSession`
    renders raw output, no ANSI/VT100 escape sequence handling. Fine for
    plain shell use, will show garbage for `htop`/`vim`/colored output.

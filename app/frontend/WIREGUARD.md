@@ -138,9 +138,20 @@ which no CI runner or this sandbox has.
 
 ## Pairing flow (all platforms)
 
-Settings → Tunnel → **Pair device**, paste the wg-quick config (the
-`[Interface]`/`[Peer]` block `archangeld`'s pairing flow will eventually
-generate — that generation doesn't exist on the backend yet either, only
-milestone 1 is built). The parsed config's private key is stored via
-`flutter_secure_storage` (OS keychain/keystore/credential manager per
-platform), never in plaintext.
+Settings → Tunnel → **Pair device** (same dialog Terminal's "No backend
+paired" prompt opens - one shared dialog, `lib/widgets/pairing_dialog.dart`).
+Run `archangeld pair <name> [--qr]` on the server; paste the printed
+base64 code into the dialog, or on Android scan the `--qr` output with the
+camera button. One code configures both the WireGuard tunnel and the
+archangeld host/token together - see `PairingBundle` in
+`lib/services/pairing_bundle.dart` and the backend's `pairingBundle` struct
+in `app/backend/cmd/archangeld/main.go` (keep the two in sync if either
+changes). The parsed WireGuard private key and the archangeld token are
+both stored via `flutter_secure_storage` (OS keychain/keystore/credential
+manager per platform), never in plaintext.
+
+This replaced the old two-step flow (paste a wg-quick config in one
+dialog, then separately paste a host + `gen-token` token in another) -
+real friction discovered pairing this app against the real server by
+hand, see the backend's `runGenToken`/`runPair` split in
+`cmd/archangeld/main.go`.

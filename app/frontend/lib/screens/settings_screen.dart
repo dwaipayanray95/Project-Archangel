@@ -6,6 +6,7 @@ import '../services/tunnel_config.dart';
 import '../services/wireguard_controller.dart';
 import '../theme/tokens.dart';
 import '../widgets/ax_widgets.dart';
+import '../widgets/pairing_dialog.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -332,7 +333,7 @@ class _TunnelCard extends StatelessWidget {
           Row(
             children: [
               if (cfg == null)
-                _FilledPill(label: 'Pair device', onTap: () => _showPairDialog(context, wg))
+                _FilledPill(label: 'Pair device', onTap: () => showPairingDialog(context))
               else ...[
                 _FilledPill(
                   label: wg.status == TunnelStatus.connected ? 'Disconnect' : 'Reconnect',
@@ -365,62 +366,4 @@ class _TunnelCard extends StatelessWidget {
     );
   }
 
-  void _showPairDialog(BuildContext context, WireGuardController wg) {
-    final controller = TextEditingController();
-    String? error;
-    showDialog<void>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setState) => AlertDialog(
-          backgroundColor: AxColors.s2,
-          title: Text('Pair device', style: AxTextStyles.sans.copyWith(fontSize: 15, fontWeight: FontWeight.w700)),
-          content: SizedBox(
-            width: 460,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Paste the wg-quick config archangeld generated for this device.',
-                  style: AxTextStyles.sans.copyWith(fontSize: 12, color: AxColors.fg2),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: controller,
-                  maxLines: 10,
-                  style: AxTextStyles.mono.copyWith(fontSize: 12),
-                  decoration: InputDecoration(
-                    filled: true,
-                    fillColor: AxColors.s1,
-                    hintText: '[Interface]\nPrivateKey = ...\nAddress = ...\n\n[Peer]\nPublicKey = ...\nEndpoint = ...',
-                    hintStyle: AxTextStyles.mono.copyWith(fontSize: 11, color: AxColors.fg3),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
-                  ),
-                ),
-                if (error != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: Text(error!, style: AxTextStyles.mono.copyWith(fontSize: 11, color: AxColors.bad)),
-                  ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
-            TextButton(
-              onPressed: () async {
-                try {
-                  await wg.pair(controller.text);
-                  if (context.mounted) Navigator.of(context).pop();
-                } on FormatException catch (e) {
-                  setState(() => error = e.message);
-                }
-              },
-              child: const Text('Pair'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }

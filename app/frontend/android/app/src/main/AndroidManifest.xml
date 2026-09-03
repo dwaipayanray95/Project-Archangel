@@ -2,6 +2,9 @@
     <!-- For the WireGuard tunnel (wireguard_flutter's VpnService backend)
          and future calls to archangeld once the backend routes exist. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- For scanning archangeld's QR pairing code (mobile_scanner). -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
     <application
         android:label="archangel"
         android:name="${applicationName}"

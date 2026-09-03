@@ -8,9 +8,26 @@
 bind_addr: "127.0.0.1"
 port: 8443
 
-# Generate with: go run ./cmd/archangeld gen-token
-# Paste the printed token_hash value here - never the plaintext token.
+# Legacy single shared-token hash. Optional - new devices should be paired
+# with `archangeld pair <name>` instead (see below), which manages its own
+# per-device tokens in token_store_path and never touches this field.
 token_hash: ""
+
+# Where per-device token hashes live, one entry per device paired via
+# `archangeld pair`. Defaults to /etc/archangel/tokens.json if unset.
+token_store_path: ""
+
+# WireGuard settings `archangeld pair` needs to add new peers. Defaults
+# shown - only override if infra/scripts/wireguard_setup.sh's WG_DIR/
+# WG_SUBNET or the interface name were changed from their defaults.
+wg_dir: ""          # default: /etc/wireguard
+wg_interface: ""    # default: wg0
+wg_subnet: ""        # default: 10.10.0
+
+# This server's public "host:port" for WireGuard (e.g. "203.0.113.5:51820")
+# - required for `archangeld pair` so it can tell a new device where to
+# dial in from outside the tunnel. Not needed just to run the server.
+public_endpoint: ""
 
 # Milestone 2: directory the file browser is jailed to.
 files_root: ""

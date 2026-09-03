@@ -6,13 +6,18 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -20,12 +25,20 @@ import (
 	"github.com/dwaipayanray95/project-archangel/backend/internal/auth"
 	"github.com/dwaipayanray95/project-archangel/backend/internal/config"
 	"github.com/dwaipayanray95/project-archangel/backend/internal/terminal"
+	"github.com/dwaipayanray95/project-archangel/backend/internal/tokenstore"
+	"github.com/dwaipayanray95/project-archangel/backend/internal/wgpeer"
 )
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "gen-token" {
-		runGenToken()
-		return
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "gen-token":
+			runGenToken()
+			return
+		case "pair":
+			runPair(os.Args[2:])
+			return
+		}
 	}
 
 	fs := flag.NewFlagSet("archangeld", flag.ExitOnError)
@@ -40,7 +53,23 @@ func main() {
 		os.Exit(1)
 	}
 
-	router := api.NewRouter(cfg.TokenHash)
+	store, err := tokenstore.Load(cfg.TokenStorePath)
+	if err != nil {
+		slog.Error("failed to load token store", "err", err)
+		os.Exit(1)
+	}
+	if cfg.TokenHash == "" && len(store.Entries()) == 0 {
+		slog.Warn("no auth tokens configured yet - every request will be rejected until a device is paired via `archangeld pair`")
+	}
+
+	verify := auth.Verifier(func(hash string) bool {
+		if cfg.TokenHash != "" && subtle.ConstantTimeCompare([]byte(hash), []byte(cfg.TokenHash)) == 1 {
+			return true
+		}
+		return store.IsValid(hash)
+	})
+
+	router := api.NewRouter(verify)
 
 	srv := &http.Server{
 		Addr:    cfg.Addr(),
@@ -106,4 +135,133 @@ func runGenToken() {
 	fmt.Printf("  token_hash: %q\n", hash)
 	fmt.Println()
 	fmt.Println("Pair this token into the Flutter app - it is never stored in plaintext on the server.")
+}
+
+// pairingBundle is the single blob the app needs to configure both the
+// WireGuard tunnel and the archangeld connection for one device. It's
+// base64(JSON)-encoded as a single copy-pasteable string, and - on
+// platforms with a camera - the same string encoded as a QR code.
+type pairingBundle struct {
+	V     int             `json:"v"`
+	Name  string          `json:"name"`
+	Host  string          `json:"host"`
+	Token string          `json:"token"`
+	WG    pairingBundleWG `json:"wg"`
+}
+
+type pairingBundleWG struct {
+	PrivateKey      string   `json:"private_key"`
+	Address         string   `json:"address"`
+	ServerPublicKey string   `json:"server_public_key"`
+	Endpoint        string   `json:"endpoint"`
+	AllowedIPs      []string `json:"allowed_ips"`
+}
+
+// runPair implements `archangeld pair <device-name> [--qr]`: generates a
+// fresh WireGuard keypair and archangeld token for one new device, adds it
+// as a live WireGuard peer (persisted to wg0.conf too), and prints one
+// bundle the app can use to configure itself in a single step - replacing
+// the old flow of SSHing in to run `gen-token`, hand-copying a wg-quick
+// config, and typing in the server's tunnel IP by hand.
+//
+// Must be run as a user who can write /etc/wireguard and run `wg set`
+// (i.e. via sudo), same as infra/scripts/wireguard_setup.sh.
+func runPair(args []string) {
+	fs := flag.NewFlagSet("pair", flag.ExitOnError)
+	configPath := fs.String("config", "/etc/archangel/config.yaml", "path to config.yaml")
+	asQR := fs.Bool("qr", false, "also print the bundle as an ASCII QR code (needs qrencode)")
+	_ = fs.Parse(args)
+
+	rest := fs.Args()
+	if len(rest) != 1 || rest[0] == "" {
+		fmt.Fprintln(os.Stderr, "usage: archangeld pair <device-name> [--qr]")
+		os.Exit(1)
+	}
+	name := rest[0]
+
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "failed to load config:", err)
+		os.Exit(1)
+	}
+	if cfg.PublicEndpoint == "" {
+		fmt.Fprintln(os.Stderr, "config.yaml has no public_endpoint set (e.g. \"203.0.113.5:51820\") - required for `pair` so new devices know where to dial in.")
+		os.Exit(1)
+	}
+
+	serverPubKey, listenPort, err := wgpeer.ServerInfo(cfg.WgDir, cfg.WgInterface)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "failed to read this server's WireGuard identity:", err)
+		os.Exit(1)
+	}
+	_ = listenPort // already baked into cfg.PublicEndpoint
+
+	ip, err := wgpeer.NextFreeIP(cfg.WgDir, cfg.WgInterface, cfg.WgSubnet)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "failed to pick a free tunnel address:", err)
+		os.Exit(1)
+	}
+
+	devicePrivKey, devicePubKey, err := wgpeer.GenerateKeypair()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "failed to generate a WireGuard keypair:", err)
+		os.Exit(1)
+	}
+
+	if err := wgpeer.AddPeer(cfg.WgDir, cfg.WgInterface, name, devicePubKey, ip); err != nil {
+		fmt.Fprintln(os.Stderr, "failed to add the new WireGuard peer:", err)
+		os.Exit(1)
+	}
+
+	token, hash, err := auth.GenerateToken()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "failed to generate an auth token:", err)
+		os.Exit(1)
+	}
+
+	store, err := tokenstore.Load(cfg.TokenStorePath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "failed to load the token store:", err)
+		os.Exit(1)
+	}
+	if err := store.Add(name, hash); err != nil {
+		fmt.Fprintln(os.Stderr, "failed to save the new device's token:", err)
+		os.Exit(1)
+	}
+
+	bundle := pairingBundle{
+		V:     1,
+		Name:  name,
+		Host:  cfg.Addr(),
+		Token: token,
+		WG: pairingBundleWG{
+			PrivateKey:      devicePrivKey,
+			Address:         ip + "/32",
+			ServerPublicKey: serverPubKey,
+			Endpoint:        cfg.PublicEndpoint,
+			AllowedIPs:      []string{cfg.BindAddr + "/32"},
+		},
+	}
+
+	raw, err := json.Marshal(bundle)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "failed to encode pairing bundle:", err)
+		os.Exit(1)
+	}
+	encoded := base64.StdEncoding.EncodeToString(raw)
+
+	fmt.Printf("Paired %q at %s. Pairing bundle (shown once - the private key and token aren't stored in plaintext anywhere else):\n\n", name, ip)
+	fmt.Println(encoded)
+	fmt.Println()
+	fmt.Println("Paste this into Archangel's pairing screen (Settings, or the Terminal tab if unpaired).")
+
+	if *asQR {
+		qr := exec.Command("qrencode", "-t", "ansiutf8")
+		qr.Stdin = strings.NewReader(encoded)
+		qr.Stdout = os.Stdout
+		qr.Stderr = os.Stderr
+		if err := qr.Run(); err != nil {
+			fmt.Fprintln(os.Stderr, "\nfailed to render QR code (is qrencode installed?):", err)
+		}
+	}
 }
