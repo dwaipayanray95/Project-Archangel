@@ -11,16 +11,17 @@ import (
 	"github.com/dwaipayanray95/project-archangel/backend/internal/terminal"
 )
 
-// NewRouter builds the full route table. tokenHash is the expected auth
-// token's SHA-256 hash - every route except /api/v1/health requires it.
-func NewRouter(tokenHash string) http.Handler {
+// NewRouter builds the full route table. verify decides whether a
+// request's token hash is valid - every route except /api/v1/health
+// requires it.
+func NewRouter(verify auth.Verifier) http.Handler {
 	mux := http.NewServeMux()
 
 	// No auth: lets the app tell "connected but backend down" apart from
 	// "can't reach the server at all".
 	mux.HandleFunc("GET /api/v1/health", healthHandler)
 
-	mux.Handle("GET /ws/terminal", auth.Middleware(tokenHash, http.HandlerFunc(terminal.Handler)))
+	mux.Handle("GET /ws/terminal", auth.Middleware(verify, http.HandlerFunc(terminal.Handler)))
 
 	// Milestones 2-4 add their routes here: /api/v1/files/*,
 	// /api/v1/services/*, /ws/stats, /api/v1/docker/*, /api/v1/oci/*.

@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"crypto/subtle"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -36,7 +37,10 @@ func TestMiddleware(t *testing.T) {
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	handler := Middleware(realHash, next)
+	verify := func(hash string) bool {
+		return subtle.ConstantTimeCompare([]byte(hash), []byte(realHash)) == 1
+	}
+	handler := Middleware(verify, next)
 
 	cases := []struct {
 		name       string

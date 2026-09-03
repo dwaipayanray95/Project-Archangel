@@ -12,7 +12,8 @@ table, WebSocket frame protocol, WireGuard setup, systemd unit design).
 Implemented:
 - `/api/v1/health` — unauthenticated liveness check
 - `/ws/terminal` — real interactive PTY shell over WebSocket, token-authed
-- Single shared token auth (`X-Archangel-Token` header or `?token=` query param for the WS handshake)
+- Per-device token auth (`X-Archangel-Token` header or `?token=` query param for the WS handshake) plus a legacy single shared-token fallback
+- `archangeld pair <device-name> [--qr]` — one-command pairing: generates a WireGuard keypair, live-adds it as a peer, generates a per-device token, and prints one bundle (or QR code) the app parses to configure both the tunnel and the connection in one step
 
 Deployed to `Archangel-Mk1` (2026-09-02) and verified end-to-end over the real network path (not just localhost): health endpoint reachable via the WireGuard IP and confirmed unreachable via the public IP, and a real terminal session (decoded `stdout` frame showing the actual live shell prompt) confirmed working over the tunnel from a paired Mac. See `infra/README.md` section 10 for the firewall issues hit and fixed along the way.
 
@@ -28,6 +29,24 @@ make run
 
 `bind_addr` in `config.yaml` should stay `127.0.0.1` for local dev — it only
 becomes the WireGuard interface IP once actually deployed to the server.
+
+## Pairing a new device
+
+Once WireGuard is set up (`infra/scripts/wireguard_setup.sh`) and
+`public_endpoint` is set in `config.yaml`, pair a new device in one step:
+
+```bash
+sudo /opt/archangel/archangeld pair my-phone --qr   # --qr only useful on Android
+```
+
+This picks the next free tunnel address, generates a fresh WireGuard
+keypair, adds it as a live peer (persisted to `wg0.conf` too, so it
+survives a reboot), generates a fresh per-device archangeld token, and
+prints one base64 bundle (and, with `--qr`, the same bundle as an ASCII QR
+code) containing everything the app needs — WireGuard config and
+archangeld host/token together. Paste it (or scan it, Android only) into
+Archangel's pairing screen. Nothing in the bundle is stored in plaintext
+on the server after this — same discipline as `gen-token`.
 
 ## Deploying to a server
 

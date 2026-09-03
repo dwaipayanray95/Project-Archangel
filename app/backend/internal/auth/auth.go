@@ -1,8 +1,9 @@
-// Package auth handles the Archangel backend's single-token authentication.
+// Package auth handles the Archangel backend's token authentication.
 //
-// There's exactly one long-lived token, generated once via GenerateToken and
-// stored server-side only as a SHA-256 hash (never plaintext). Every
-// request except /api/v1/health must present it via the X-Archangel-Token
+// Each paired device has its own long-lived token, generated once via
+// GenerateToken and stored server-side only as a SHA-256 hash (never
+// plaintext) - see internal/tokenstore. Every request except
+// /api/v1/health must present a valid token via the X-Archangel-Token
 // header. This is deliberately simple - no JWTs, no sessions, no bcrypt -
 // because it protects a single-user personal tool that's already sitting
 // behind a WireGuard tunnel; the token is defense-in-depth, not the only
@@ -13,7 +14,6 @@ package auth
 import (
 	"crypto/rand"
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
@@ -37,10 +37,16 @@ func HashToken(token string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// Middleware rejects any request that doesn't present a token matching
-// expectedHash, using a constant-time comparison so response timing can't
-// leak how much of the token was correct.
-func Middleware(expectedHash string, next http.Handler) http.Handler {
+// Verifier reports whether a SHA-256 hex hash matches some currently valid
+// token - a single legacy shared token, a per-device tokenstore.Store, or
+// both combined. Callers should use a constant-time comparison per
+// candidate hash, same discipline as the old single-hash check this
+// replaced.
+type Verifier func(hashHex string) bool
+
+// Middleware rejects any request that doesn't present a token verify
+// accepts.
+func Middleware(verify Verifier, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token := r.Header.Get("X-Archangel-Token")
 		if token == "" {
@@ -56,8 +62,7 @@ func Middleware(expectedHash string, next http.Handler) http.Handler {
 			return
 		}
 
-		got := HashToken(token)
-		if subtle.ConstantTimeCompare([]byte(got), []byte(expectedHash)) != 1 {
+		if !verify(HashToken(token)) {
 			http.Error(w, "invalid token", http.StatusUnauthorized)
 			return
 		}
