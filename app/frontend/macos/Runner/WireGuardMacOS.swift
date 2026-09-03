@@ -15,12 +15,26 @@
 // isn't something this session could cross-compile from Linux the way
 // wireguard-go itself was.
 //
-// UNVERIFIED: written from the documented protocol and wireguard-go's
-// known behavior, but never compiled or run - there is no macOS toolchain
-// available in the sandbox this was written in. Expect a debugging pass
-// on real hardware, most likely around: the exact interface-name log line
-// wireguard-go prints (parsed below to find the UAPI socket path), and
-// whether the elevated-process plumbing behaves as expected.
+// Status: the PREVIOUS version of this file was compiled and run on real
+// hardware (no macOS toolchain exists in the sandbox this file is edited
+// from, so nothing here is compiled by the person/agent making these
+// changes - real building and testing happens only on the actual Mac).
+// That run confirmed interface creation and UAPI configuration both work
+// (a utun interface came up with the expected address) and surfaced two
+// real bugs, fixed below but NOT YET recompiled or retested:
+//   1. wireguard-go daemonizes (double-forks into the background) by
+//      default, detaching from both the log redirection and the PID our
+//      shell's `$!` captured - WG_PROCESS_FOREGROUND=1 below stops that,
+//      and the interface name is now computed ourselves via `ifconfig -l`
+//      rather than parsed from a log line that daemonizing meant we'd
+//      often never actually see.
+//   2. disconnect() was tracking and terminating the *osascript* wrapper
+//      process, not the actual (elevated, root-owned) wireguard-go
+//      process it launched - every connect attempt leaked a permanent
+//      root process. Fixed to kill the real PID (plus an exact-match
+//      pkill fallback) via the same elevated-privileges path.
+// Next step is rebuilding and retesting this exact fix on real hardware -
+// treat it as unverified until that happens, same as the first version.
 import Cocoa
 import FlutterMacOS
 import Darwin
@@ -32,7 +46,7 @@ enum WGMacError: Error {
 }
 
 class WireGuardMacOS: NSObject {
-    private var process: Process?
+    private var wgPID: Int32?
     private var interfaceName: String?
     private var uapiSocketFD: Int32 = -1
 
@@ -77,25 +91,27 @@ class WireGuardMacOS: NSObject {
         let parsed = try WGConfig.parse(config)
         let binaryPath = try bundledWireguardGoPath()
 
-        // wireguard-go logs the real interface name it picked to stderr as
-        // it starts (asking for a bare "utun" lets macOS/the kernel assign
-        // the next free number, avoiding collisions with other tunnels).
-        // We read that from a log file rather than piping stderr directly,
-        // since the process itself needs to be launched elevated (below)
-        // and elevated processes' pipes are awkward to read from directly.
+        // Pick the interface name ourselves (rather than passing a bare
+        // "utun" and parsing wireguard-go's log for whatever it picked) -
+        // real-hardware testing showed wireguard-go's default behavior is
+        // to daemonize (double-fork into the background), which detaches
+        // it from both our log redirection and the PID `$!` would have
+        // captured. WG_PROCESS_FOREGROUND=1 below stops the daemonizing,
+        // but computing the name ourselves removes the log-parsing race
+        // entirely regardless.
+        let ifname = try nextFreeUtunName()
+
         let logPath = NSTemporaryDirectory() + "archangel-wireguard-go.log"
+        let pidPath = logPath + ".pid"
         FileManager.default.createFile(atPath: logPath, contents: nil)
 
-        // Foreground (not -f/daemonize) so `process` tracks its lifetime
-        // and disconnect() can just terminate it. Needs root to create the
-        // utun device at all - osascript's "with administrator privileges"
-        // gives the native macOS password prompt, no separate helper tool
-        // or Developer Program entitlement required.
-        let launchCommand = "'\(binaryPath)' utun > '\(logPath)' 2>&1 &\necho $! > '\(logPath).pid'"
+        // Needs root to create the utun device at all - osascript's "with
+        // administrator privileges" gives the native macOS password
+        // prompt, no separate helper tool or Developer Program entitlement
+        // required.
+        let launchCommand = "WG_PROCESS_FOREGROUND=1 '\(binaryPath)' \(ifname) > '\(logPath)' 2>&1 & echo $! > '\(pidPath)'"
         let escaped = launchCommand.replacingOccurrences(of: "\"", with: "\\\"")
-        let osascript = """
-        do shell script "\(escaped)" with administrator privileges
-        """
+        let osascript = "do shell script \"\(escaped)\" with administrator privileges"
 
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
@@ -105,38 +121,60 @@ class WireGuardMacOS: NSObject {
         guard task.terminationStatus == 0 else {
             throw WGMacError.message("Could not start wireguard-go (admin authorization declined or failed).")
         }
-        self.process = task
 
-        // Give wireguard-go a moment to create the interface and print its
-        // name, then parse the log for it.
-        let ifname = try waitForInterfaceName(logPath: logPath, timeout: 5.0)
         self.interfaceName = ifname
+        self.wgPID = try? readPID(pidPath: pidPath)
 
+        try waitForUapiSocket(ifname: ifname, logPath: logPath, timeout: 5.0)
         try configureViaUAPI(ifname: ifname, config: parsed)
         try bringUpInterface(ifname: ifname, address: parsed.address)
     }
 
-    private func waitForInterfaceName(logPath: String, timeout: TimeInterval) throws -> String {
-        let deadline = Date().addingTimeInterval(timeout)
-        // wireguard-go's startup log includes a line like:
-        //   "(utun7) Starting wireguard-go version 0.0.20230223"
-        // — this regex is the part most likely to need adjusting once this
-        // runs against a real build's actual log wording.
-        let pattern = try! NSRegularExpression(pattern: "\\((utun[0-9]+)\\)")
+    /// Lists currently-existing utunN interfaces via `ifconfig -l` (a plain
+    /// unprivileged listing) and returns the next free number - avoids
+    /// ever colliding with another tunnel already on this Mac.
+    private func nextFreeUtunName() throws -> String {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/sbin/ifconfig")
+        task.arguments = ["-l"]
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        try task.run()
+        task.waitUntilExit()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let names = String(decoding: data, as: UTF8.self).split(separator: " ")
+        let usedNumbers = names.compactMap { name -> Int? in
+            guard name.hasPrefix("utun") else { return nil }
+            return Int(name.dropFirst(4))
+        }
+        return "utun\((usedNumbers.max() ?? -1) + 1)"
+    }
 
+    private func readPID(pidPath: String) throws -> Int32 {
+        let deadline = Date().addingTimeInterval(2.0)
         while Date() < deadline {
-            if let contents = try? String(contentsOfFile: logPath, encoding: .utf8) {
-                if let match = pattern.firstMatch(in: contents, range: NSRange(contents.startIndex..., in: contents)),
-                   let range = Range(match.range(at: 1), in: contents) {
-                    return String(contents[range])
-                }
-                if contents.lowercased().contains("error") || contents.lowercased().contains("denied") {
-                    throw WGMacError.message("wireguard-go failed to start: \(contents)")
-                }
+            if let s = try? String(contentsOfFile: pidPath, encoding: .utf8),
+               let pid = Int32(s.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                return pid
+            }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        throw WGMacError.message("Could not read wireguard-go's PID")
+    }
+
+    private func waitForUapiSocket(ifname: String, logPath: String, timeout: TimeInterval) throws {
+        let socketPath = "/var/run/wireguard/\(ifname).sock"
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if FileManager.default.fileExists(atPath: socketPath) { return }
+            if let contents = try? String(contentsOfFile: logPath, encoding: .utf8),
+               contents.lowercased().contains("error") || contents.lowercased().contains("denied") {
+                throw WGMacError.message("wireguard-go failed to start: \(contents)")
             }
             Thread.sleep(forTimeInterval: 0.2)
         }
-        throw WGMacError.message("Timed out waiting for wireguard-go to create the tunnel interface.")
+        let logContents = (try? String(contentsOfFile: logPath, encoding: .utf8)) ?? "(no log output)"
+        throw WGMacError.message("Timed out waiting for wireguard-go's UAPI socket. Log: \(logContents)")
     }
 
     // MARK: - UAPI configuration
@@ -251,8 +289,28 @@ class WireGuardMacOS: NSObject {
             close(uapiSocketFD)
             uapiSocketFD = -1
         }
-        process?.terminate()
-        process = nil
+
+        // wireguard-go runs as root (launched via administrator
+        // privileges), so killing it needs the same elevation - a plain
+        // Process.terminate() from this unprivileged process can't touch
+        // it. Real-hardware testing surfaced this the hard way: the
+        // previous version tracked and terminated the *osascript* wrapper
+        // instead (which had already exited), leaking a root wireguard-go
+        // process on every single connect attempt. Kill by PID and by an
+        // exact-match pkill together (single admin prompt) so a stale or
+        // missing PID still gets cleaned up.
+        if let pid = wgPID, let binaryPath = try? bundledWireguardGoPath(), let ifname = interfaceName {
+            let cmd = "kill \(pid) 2>/dev/null; pkill -f '\(binaryPath) \(ifname)' 2>/dev/null; true"
+            let escaped = cmd.replacingOccurrences(of: "\"", with: "\\\"")
+            let osascript = "do shell script \"\(escaped)\" with administrator privileges"
+            let task = Process()
+            task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+            task.arguments = ["-e", osascript]
+            try? task.run()
+            task.waitUntilExit()
+        }
+
+        wgPID = nil
         interfaceName = nil
     }
 
