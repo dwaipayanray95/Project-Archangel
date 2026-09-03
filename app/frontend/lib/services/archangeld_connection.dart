@@ -65,4 +65,28 @@ class ArchangeldConnection extends ChangeNotifier {
     }
     return Uri.parse('ws://$_host/ws/terminal').replace(queryParameters: {'token': _token});
   }
+
+  /// `ws://<host>/ws/stats?token=...` - real-time metrics stream.
+  Uri statsWsUri() {
+    if (!isPaired) {
+      throw StateError('Not paired with a backend');
+    }
+    return Uri.parse('ws://$_host/ws/stats').replace(queryParameters: {'token': _token});
+  }
+
+  /// `http://<host>/api/v1/system/metrics`
+  Uri metricsHttpUri() {
+    if (!isPaired) {
+      throw StateError('Not paired with a backend');
+    }
+    return Uri.parse('http://$_host/api/v1/system/metrics');
+  }
+
+  /// `http://<host>/api/v1/system/processes`
+  Uri processesHttpUri() {
+    if (!isPaired) {
+      throw StateError('Not paired with a backend');
+    }
+    return Uri.parse('http://$_host/api/v1/system/processes');
+  }
 }

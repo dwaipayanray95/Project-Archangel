@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../data/mock_data.dart';
+import '../models/system_metrics.dart';
+import '../services/archangeld_connection.dart';
+import '../services/monitoring_service.dart';
 import '../theme/tokens.dart';
 import '../widgets/ax_widgets.dart';
 import '../widgets/sparkline.dart';
@@ -18,18 +22,55 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
   String _range = '1h';
   String _procQuery = '';
 
-  static const _chartValues = [.2, .3, .22, .4, .3, .5, .35, .4, .3, .55, .42, .38, .48, .18];
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final backend = context.read<ArchangeldConnection>();
+      context.read<MonitoringService>().start(backend);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
+    final mon = context.watch<MonitoringService>();
+    final metrics = mon.metrics;
+
     return SingleChildScrollView(
       padding: const EdgeInsets.all(18),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Monitoring', style: AxTextStyles.h1),
+          Row(
+            children: [
+              Text('Monitoring', style: AxTextStyles.h1),
+              const Spacer(),
+              if (mon.isConnected)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: AxColors.accent.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(AxRadius.pill),
+                    border: Border.all(color: AxColors.accent.withValues(alpha: 0.25)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const StatusDot(color: AxColors.accent, size: 5),
+                      const SizedBox(width: 6),
+                      Text('LIVE 2s', style: AxTextStyles.mono.copyWith(fontSize: 10.5, color: AxColors.accent)),
+                    ],
+                  ),
+                ),
+            ],
+          ),
           const SizedBox(height: 3),
-          Text('node_exporter · 15s scrape', style: AxTextStyles.mutedMono),
+          Text(
+            mon.isConnected
+                ? 'archangeld · streaming live over WireGuard'
+                : (mon.status == MonitoringStatus.connecting ? 'connecting to archangeld...' : 'node_exporter · offline / mock data'),
+            style: AxTextStyles.mutedMono,
+          ),
           const SizedBox(height: 15),
           Wrap(
             spacing: 12,
@@ -58,7 +99,18 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
             ],
           ),
           const SizedBox(height: 14),
-          if (_tab == _MonTab.processes) _ProcessTable(query: _procQuery, onQuery: (v) => setState(() => _procQuery = v)) else _ChartCard(tab: _tab, values: _chartValues),
+          if (_tab == _MonTab.processes)
+            _ProcessTable(
+              query: _procQuery,
+              onQuery: (v) => setState(() => _procQuery = v),
+              liveProcs: mon.processes,
+              totalCount: mon.totalProcesses,
+            )
+          else
+            _ChartCard(
+              tab: _tab,
+              metrics: metrics,
+            ),
         ],
       ),
     );
@@ -67,29 +119,18 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
 
 class _ChartCard extends StatelessWidget {
   final _MonTab tab;
-  final List<double> values;
-  const _ChartCard({required this.tab, required this.values});
+  final SystemMetrics? metrics;
+  const _ChartCard({required this.tab, this.metrics});
 
   @override
   Widget build(BuildContext context) {
-    final (title, now, unit) = switch (tab) {
-      _MonTab.cpu => ('CPU utilization', '18.4', '%'),
-      _MonTab.memory => ('Memory usage', '9.6', 'GB'),
-      _MonTab.disk => ('Disk throughput', '42', 'MB/s'),
-      _MonTab.network => ('Network throughput', '4.2', 'MB/s'),
-      _MonTab.processes => ('', '', ''),
+    final (title, now, unit, values, stats, breakdown) = switch (tab) {
+      _MonTab.cpu => _buildCpuData(metrics?.cpu),
+      _MonTab.memory => _buildMemoryData(metrics?.memory),
+      _MonTab.disk => _buildDiskData(metrics?.disk),
+      _MonTab.network => _buildNetworkData(metrics?.network),
+      _MonTab.processes => ('', '', '', <double>[], <List<String>>[], <List<dynamic>>[]),
     };
-    final stats = const [
-      ['MIN', '4%'],
-      ['AVG', '19%'],
-      ['MAX', '61%'],
-    ];
-    final breakdown = const [
-      ['core 0', 0.24, AxColors.accent],
-      ['core 1', 0.31, AxColors.accent],
-      ['core 2', 0.18, AxColors.info],
-      ['core 3', 0.42, AxColors.warn],
-    ];
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -172,7 +213,7 @@ class _ChartCard extends StatelessWidget {
                           ],
                         ),
                         const SizedBox(height: 8),
-                        AxMeter(value: b[1] as double, color: b[2] as Color),
+                        AxMeter(value: (b[1] as double).clamp(0.0, 1.0), color: b[2] as Color),
                       ],
                     ),
                   ),
@@ -183,18 +224,178 @@ class _ChartCard extends StatelessWidget {
       ],
     );
   }
+
+  (String, String, String, List<double>, List<List<String>>, List<List<dynamic>>) _buildCpuData(CPUMetrics? cpu) {
+    if (cpu == null) {
+      return (
+        'CPU utilization', '18.4', '%',
+        const [.2, .3, .22, .4, .3, .5, .35, .4, .3, .55, .42, .38, .48, .18],
+        const [['MIN', '4%'], ['AVG', '19%'], ['MAX', '61%']],
+        const [
+          ['core 0', 0.24, AxColors.accent],
+          ['core 1', 0.31, AxColors.accent],
+          ['core 2', 0.18, AxColors.info],
+          ['core 3', 0.42, AxColors.warn],
+        ],
+      );
+    }
+
+    final hist = cpu.history.isEmpty
+        ? [cpu.usagePercent / 100.0]
+        : cpu.history.map((v) => (v / 100.0).clamp(0.0, 1.0)).toList();
+
+    final minVal = (cpu.history.isEmpty ? cpu.usagePercent : cpu.history.reduce((a, b) => a < b ? a : b)).round();
+    final maxVal = (cpu.history.isEmpty ? cpu.usagePercent : cpu.history.reduce((a, b) => a > b ? a : b)).round();
+    final avgVal = cpu.history.isEmpty ? cpu.usagePercent.round() : (cpu.history.reduce((a, b) => a + b) / cpu.history.length).round();
+
+    final breakdown = cpu.cores.map((c) {
+      final ratio = (c.usagePercent / 100.0).clamp(0.0, 1.0);
+      final col = ratio > 0.8 ? AxColors.bad : (ratio > 0.4 ? AxColors.warn : AxColors.accent);
+      return ['core ${c.id}', ratio, col];
+    }).toList();
+
+    return (
+      'CPU utilization',
+      cpu.usagePercent.toStringAsFixed(1),
+      '%',
+      hist,
+      [['MIN', '$minVal%'], ['AVG', '$avgVal%'], ['MAX', '$maxVal%']],
+      breakdown,
+    );
+  }
+
+  (String, String, String, List<double>, List<List<String>>, List<List<dynamic>>) _buildMemoryData(MemoryMetrics? mem) {
+    if (mem == null) {
+      return (
+        'Memory usage', '9.6', 'GB',
+        const [.4, .45, .5, .48, .55, .58, .6, .61],
+        const [['MIN', '38%'], ['AVG', '52%'], ['MAX', '61%']],
+        const [
+          ['used', 0.61, AxColors.accent],
+          ['available', 0.39, AxColors.info],
+        ],
+      );
+    }
+
+    final hist = mem.history.isEmpty
+        ? [mem.usagePercent / 100.0]
+        : mem.history.map((v) => (v / 100.0).clamp(0.0, 1.0)).toList();
+
+    final minVal = (mem.history.isEmpty ? mem.usagePercent : mem.history.reduce((a, b) => a < b ? a : b)).round();
+    final maxVal = (mem.history.isEmpty ? mem.usagePercent : mem.history.reduce((a, b) => a > b ? a : b)).round();
+    final avgVal = mem.history.isEmpty ? mem.usagePercent.round() : (mem.history.reduce((a, b) => a + b) / mem.history.length).round();
+
+    final breakdown = [
+      ['used', (mem.usagePercent / 100.0).clamp(0.0, 1.0), AxColors.accent],
+      ['available', (1.0 - mem.usagePercent / 100.0).clamp(0.0, 1.0), AxColors.info],
+    ];
+
+    return (
+      'Memory usage',
+      mem.usedGb.toStringAsFixed(1),
+      'GB',
+      hist,
+      [['MIN', '$minVal%'], ['AVG', '$avgVal%'], ['MAX', '$maxVal%']],
+      breakdown,
+    );
+  }
+
+  (String, String, String, List<double>, List<List<String>>, List<List<dynamic>>) _buildDiskData(DiskMetrics? disk) {
+    if (disk == null) {
+      return (
+        'Disk throughput', '42', 'MB/s',
+        const [.1, .2, .15, .3, .25, .42],
+        const [['MIN', '2 MB/s'], ['AVG', '18 MB/s'], ['MAX', '42 MB/s']],
+        const [
+          ['/', 0.45, AxColors.accent],
+        ],
+      );
+    }
+
+    final hist = disk.history.isEmpty
+        ? [disk.totalMbPerSec > 0 ? (disk.totalMbPerSec / 100.0).clamp(0.0, 1.0) : 0.05]
+        : disk.history.map((v) => (v / 100.0).clamp(0.0, 1.0)).toList();
+
+    final breakdown = disk.mounts.map((m) {
+      final r = (m.usagePercent / 100.0).clamp(0.0, 1.0);
+      return [m.mountPoint, r, r > 0.85 ? AxColors.bad : AxColors.accent];
+    }).toList();
+
+    return (
+      'Disk throughput',
+      disk.totalMbPerSec.toStringAsFixed(1),
+      'MB/s',
+      hist,
+      [['READ', '${disk.readMbPerSec.toStringAsFixed(1)} M/s'], ['WRITE', '${disk.writeMbPerSec.toStringAsFixed(1)} M/s'], ['USED', '${disk.usagePercent.round()}%']],
+      breakdown.isEmpty ? [['/', 0.42, AxColors.accent]] : breakdown,
+    );
+  }
+
+  (String, String, String, List<double>, List<List<String>>, List<List<dynamic>>) _buildNetworkData(NetworkMetrics? net) {
+    if (net == null) {
+      return (
+        'Network throughput', '4.2', 'MB/s',
+        const [.1, .3, .2, .6, .4, .3, .5, .3],
+        const [['MIN', '0.5 M/s'], ['AVG', '2.8 M/s'], ['MAX', '4.2 M/s']],
+        const [
+          ['eth0', 0.65, AxColors.accent],
+          ['wg0', 0.35, AxColors.info],
+        ],
+      );
+    }
+
+    final hist = net.history.isEmpty
+        ? [net.totalMbPerSec > 0 ? (net.totalMbPerSec / 10.0).clamp(0.0, 1.0) : 0.05]
+        : net.history.map((v) => (v / 10.0).clamp(0.0, 1.0)).toList();
+
+    final breakdown = net.interfaces.map((i) {
+      final totalMb = i.rxMbPerSec + i.txMbPerSec;
+      final ratio = (totalMb / (net.totalMbPerSec > 0 ? net.totalMbPerSec : 1.0)).clamp(0.0, 1.0);
+      return [i.name, ratio, AxColors.accent];
+    }).toList();
+
+    return (
+      'Network throughput',
+      net.totalMbPerSec.toStringAsFixed(1),
+      'MB/s',
+      hist,
+      [['RX', '${net.rxMbPerSec.toStringAsFixed(1)} M/s'], ['TX', '${net.txMbPerSec.toStringAsFixed(1)} M/s'], ['TOTAL', '${net.totalMbPerSec.toStringAsFixed(1)} M/s']],
+      breakdown.isEmpty ? [['eth0', 0.5, AxColors.accent]] : breakdown,
+    );
+  }
 }
 
 class _ProcessTable extends StatelessWidget {
   final String query;
   final ValueChanged<String> onQuery;
-  const _ProcessTable({required this.query, required this.onQuery});
+  final List<LiveProcessInfo> liveProcs;
+  final int totalCount;
+
+  const _ProcessTable({
+    required this.query,
+    required this.onQuery,
+    this.liveProcs = const [],
+    this.totalCount = 0,
+  });
 
   @override
   Widget build(BuildContext context) {
+    final procsSource = liveProcs.isNotEmpty
+        ? liveProcs.map((p) => ProcInfo(
+              pid: p.pid,
+              name: p.name,
+              user: p.user,
+              cpu: p.cpu,
+              mem: p.mem,
+              state: p.state,
+            )).toList()
+        : procs;
+
     final filtered = query.isEmpty
-        ? procs
-        : procs.where((p) => p.name.toLowerCase().contains(query.toLowerCase()) || p.user.toLowerCase().contains(query.toLowerCase()) || p.pid.toString().contains(query)).toList();
+        ? procsSource
+        : procsSource.where((p) => p.name.toLowerCase().contains(query.toLowerCase()) || p.user.toLowerCase().contains(query.toLowerCase()) || p.pid.toString().contains(query)).toList();
+
+    final displayCount = totalCount > 0 ? totalCount : filtered.length;
 
     return Container(
       decoration: BoxDecoration(color: AxColors.s1, borderRadius: BorderRadius.circular(AxRadius.xl), border: Border.all(color: AxColors.line)),
@@ -226,7 +427,7 @@ class _ProcessTable extends StatelessWidget {
                   ),
                 ),
                 const Spacer(),
-                Text('${filtered.length} processes', style: AxTextStyles.mono.copyWith(fontSize: 10.5, color: AxColors.fg3)),
+                Text('$displayCount processes', style: AxTextStyles.mono.copyWith(fontSize: 10.5, color: AxColors.fg3)),
               ],
             ),
           ),
@@ -305,3 +506,4 @@ class _ColHead extends StatelessWidget {
     return Text(text, textAlign: alignEnd ? TextAlign.right : TextAlign.left, style: AxTextStyles.label);
   }
 }
+

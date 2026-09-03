@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'data/app_state.dart';
 import 'screens/setup/setup_landing_screen.dart';
 import 'services/archangeld_connection.dart';
+import 'services/monitoring_service.dart';
 import 'services/wireguard_controller.dart';
 import 'theme/app_theme.dart';
 import 'theme/tokens.dart';
@@ -29,6 +30,7 @@ class ArchangelApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => AppState()),
         ChangeNotifierProvider(create: (_) => WireGuardController()..bootstrap()),
         ChangeNotifierProvider(create: (_) => ArchangeldConnection()..load()),
+        ChangeNotifierProvider(create: (_) => MonitoringService()),
       ],
       child: Consumer<AppState>(
         builder: (context, app, _) => MaterialApp(

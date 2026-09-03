@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../data/app_state.dart';
 import '../data/mock_data.dart';
+import '../models/system_metrics.dart';
+import '../services/monitoring_service.dart';
 import '../theme/tokens.dart';
 import '../widgets/ax_widgets.dart';
 import '../widgets/sparkline.dart';
@@ -20,12 +22,88 @@ class _Tile {
   const _Tile(this.label, this.value, this.unit, this.sub, this.delta, this.deltaColor, this.color, this.icon, this.spark, this.go);
 }
 
-final _tiles = <_Tile>[
+final _mockTiles = <_Tile>[
   _Tile('CPU', '18', '%', '8 cores · 2.4GHz avg', '-2%', AxColors.accent, AxColors.accent, Icons.memory, const [.2, .3, .22, .4, .3, .5, .35, .18], AxSection.monitoring),
   _Tile('MEMORY', '9.6', 'GB', 'of 15.6 GB · 61%', '+4%', AxColors.warn, AxColors.info, Icons.developer_board, const [.4, .45, .5, .48, .55, .58, .6, .61], AxSection.monitoring),
   _Tile('DISK', '214', 'GB', 'of 512 GB · 45%', '+0.2%', AxColors.fg3, AxColors.fg, Icons.storage, const [.4, .41, .42, .42, .43, .44, .44, .45], AxSection.monitoring),
   _Tile('NETWORK', '4.2', 'MB/s', '1.4 up · 2.8 down', '', AxColors.fg3, AxColors.accent, Icons.swap_vert, const [.1, .3, .2, .6, .4, .3, .5, .3], AxSection.monitoring),
 ];
+
+List<_Tile> _buildTiles(SystemMetrics? metrics) {
+  if (metrics == null) return _mockTiles;
+
+  final cpu = metrics.cpu;
+  final mem = metrics.memory;
+  final disk = metrics.disk;
+  final net = metrics.network;
+
+  final cpuSpark = cpu.history.isEmpty
+      ? [cpu.usagePercent / 100.0]
+      : cpu.history.map((v) => (v / 100.0).clamp(0.0, 1.0)).toList();
+
+  final memSpark = mem.history.isEmpty
+      ? [mem.usagePercent / 100.0]
+      : mem.history.map((v) => (v / 100.0).clamp(0.0, 1.0)).toList();
+
+  final diskSpark = disk.history.isEmpty
+      ? [disk.totalMbPerSec > 0 ? (disk.totalMbPerSec / 100.0).clamp(0.0, 1.0) : 0.05]
+      : disk.history.map((v) => (v / 100.0).clamp(0.0, 1.0)).toList();
+
+  final netSpark = net.history.isEmpty
+      ? [net.totalMbPerSec > 0 ? (net.totalMbPerSec / 10.0).clamp(0.0, 1.0) : 0.05]
+      : net.history.map((v) => (v / 10.0).clamp(0.0, 1.0)).toList();
+
+  return [
+    _Tile(
+      'CPU',
+      cpu.usagePercent.toStringAsFixed(0),
+      '%',
+      '${cpu.cores.length} cores active',
+      '',
+      AxColors.accent,
+      AxColors.accent,
+      Icons.memory,
+      cpuSpark,
+      AxSection.monitoring,
+    ),
+    _Tile(
+      'MEMORY',
+      mem.usedGb.toStringAsFixed(1),
+      'GB',
+      'of ${mem.totalGb.toStringAsFixed(1)} GB · ${mem.usagePercent.toStringAsFixed(0)}%',
+      '',
+      AxColors.warn,
+      AxColors.info,
+      Icons.developer_board,
+      memSpark,
+      AxSection.monitoring,
+    ),
+    _Tile(
+      'DISK',
+      disk.usedGb.toStringAsFixed(0),
+      'GB',
+      'of ${disk.totalGb.toStringAsFixed(0)} GB · ${disk.usagePercent.toStringAsFixed(0)}%',
+      '',
+      AxColors.fg3,
+      AxColors.fg,
+      Icons.storage,
+      diskSpark,
+      AxSection.monitoring,
+    ),
+    _Tile(
+      'NETWORK',
+      net.totalMbPerSec.toStringAsFixed(1),
+      'MB/s',
+      '${net.rxMbPerSec.toStringAsFixed(1)} in · ${net.txMbPerSec.toStringAsFixed(1)} out',
+      '',
+      AxColors.fg3,
+      AxColors.accent,
+      Icons.swap_vert,
+      netSpark,
+      AxSection.monitoring,
+    ),
+  ];
+}
 
 class OverviewScreen extends StatelessWidget {
   const OverviewScreen({super.key});
@@ -76,6 +154,8 @@ class OverviewScreen extends StatelessWidget {
           LayoutBuilder(
             builder: (context, c) {
               final cols = c.maxWidth >= 900 ? 4 : (c.maxWidth >= 560 ? 2 : 1);
+              final mon = context.watch<MonitoringService>();
+              final tiles = _buildTiles(mon.metrics);
               return GridView.count(
                 crossAxisCount: cols,
                 shrinkWrap: true,
@@ -83,7 +163,7 @@ class OverviewScreen extends StatelessWidget {
                 mainAxisSpacing: 11,
                 crossAxisSpacing: 11,
                 childAspectRatio: 1.9,
-                children: [for (final t in _tiles) _StatTile(t: t, onTap: () => app.go(t.go))],
+                children: [for (final t in tiles) _StatTile(t: t, onTap: () => app.go(t.go))],
               );
             },
           ),
