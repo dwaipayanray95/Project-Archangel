@@ -21,9 +21,17 @@ class ArchangeldConnection extends ChangeNotifier {
 
   bool get isPaired => _host != null && _token != null;
 
+  bool _loaded = false;
+
+  /// True once [load] has finished reading storage - see
+  /// WireGuardController.isBootstrapped for why the root router needs
+  /// this rather than just checking [isPaired] immediately.
+  bool get isLoaded => _loaded;
+
   Future<void> load() async {
     _host = await _secureStorage.read(key: _kHostKey);
     _token = await _secureStorage.read(key: _kTokenKey);
+    _loaded = true;
     notifyListeners();
   }
 

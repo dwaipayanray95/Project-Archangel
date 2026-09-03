@@ -74,20 +74,48 @@ no Windows toolchain. Everything below is real, complete code, but
    either platform yet. Expect friction — this is genuinely the first
    time this code has met a real toolchain for either. (macOS is now
    done — see above.)
-3. ~~archangeld has no pairing endpoint~~ **Done**: `archangeld pair <name>
-   [--qr]` (a CLI subcommand, not an HTTP route - no HTTP round trip
-   through the tunnel is needed before the tunnel exists) generates a
-   WireGuard keypair, live-adds it as a peer, generates a per-device
-   token, and prints one bundle the app's single pairing dialog
+3. ~~archangeld has no pairing endpoint~~ **Done, verified end-to-end on
+   real hardware**: `archangeld pair <name> [--qr]` generates a WireGuard
+   keypair, live-adds it as a peer, generates a per-device token, and
+   prints one bundle the app's single pairing dialog
    (`lib/widgets/pairing_dialog.dart`) parses to configure both the tunnel
    and the backend connection in one step - paste on any platform, scan a
    QR code on Android. See `app/backend/internal/tokenstore`,
-   `internal/wgpeer`, and `lib/services/pairing_bundle.dart`. Not yet
-   tested against a real server in this pass - the `pair` subcommand and
-   the app's parser were built and unit-verified (`go build`/`go
-   test`/`flutter analyze`/`flutter test` all clean) but never run
-   together against a real WireGuard peer add. Files/Containers/
-   Monitoring/DevOps screens are still 100% mock data
+   `internal/wgpeer`, and `lib/services/pairing_bundle.dart`. Two real
+   bugs were found and fixed getting this working on the real deployed
+   server: a Swift `ifconfig -l` parsing bug that always picked an
+   already-taken `utun` interface (fixed in `WireGuardMacOS.swift`'s
+   `nextFreeUtunName`), and `tokens.json` being written 0600 root-owned
+   by the `pair` CLI (root, via sudo) while the long-running service runs
+   as the unprivileged `archangel` user - crashed the service on startup
+   until fixed (`internal/tokenstore`'s `save()` now chowns/chmods it
+   group-readable) plus the server needed to stop caching the token store
+   at startup and re-read it per auth check (a device paired while the
+   server is already running - i.e. every real-world use of `pair` - was
+   otherwise invisible until a manual restart).
+3b. **New**: an in-app VPS setup wizard
+   (`lib/screens/setup/setup_wizard_screen.dart`,
+   `lib/services/vps_setup_service.dart`) that bootstraps a *fresh* VPS
+   over SSH from inside the app itself - no more SSHing in by hand to run
+   the infra scripts and `deploy.sh`. Takes a host + SSH private key,
+   detects the server's architecture, uploads and runs the real
+   `infra/scripts/*.sh` (bundled as Flutter assets - copies, not a shared
+   path, see that file's doc comment on keeping them in sync), downloads
+   the matching `archangeld` release binary from GitHub Releases (see
+   `.github/workflows/release-backend.yml` - **a version tag must be
+   pushed at least once** for "latest" to resolve to anything), installs
+   the systemd service, and runs `archangeld pair --raw` to auto-pair.
+   Safe to re-run against an already-set-up server (skips WireGuard setup
+   if `wg0.conf` exists, never overwrites `config.yaml`). The app's root
+   router (`main.dart`'s `_RootRouter`) now shows a landing screen
+   choosing between this wizard and the existing manual pairing dialog
+   when neither the tunnel nor the backend is paired yet.
+   **Unverified**: the SSH orchestration logic has 7 passing unit tests
+   against a fake SSH transport (idempotency branches, failure paths),
+   `flutter analyze`/`flutter build linux` are clean, but it has never
+   run against a real VPS - that's the natural next real-hardware
+   milestone, same discipline as everything else in this file.
+   Files/Containers/Monitoring/DevOps screens are still 100% mock data
    (`lib/data/mock_data.dart`) - no backend routes exist for them yet,
    pairing only covers the tunnel + terminal auth.
 4. **Terminal is not a full terminal emulator** — `TerminalSession`
