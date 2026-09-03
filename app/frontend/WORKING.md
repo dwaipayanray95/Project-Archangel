@@ -30,6 +30,16 @@ summary below.
 - **WireGuard state machine on Linux**: real `wireguard_flutter` package,
   real failure path exercised (no `wg`/sudo in that sandbox → surfaced
   correctly as "unsupported" in both the top bar and Settings, no crash).
+- **macOS WireGuard — fully working, real device, real server.** The
+  custom `wireguard-go`-based backend connects end-to-end (top bar shows
+  green/connected). Took four rounds of real bugs found via actual
+  hardware testing and fixed: `wireguard-go` daemonizing by default
+  (detached it from our log/PID tracking), `disconnect()` killing the
+  wrong process (leaked root processes), a UAPI socket permission
+  denial, and one real Swift compile error (`Int8`/`UInt8` mismatch).
+  Full history in `WIREGUARD.md`. Not yet touched: routing beyond the
+  interface's own address (fine for archangeld's narrow `AllowedIPs`,
+  not for a full-tunnel `0.0.0.0/0` config).
 - `flutter analyze`: clean. `flutter test test/widget_test.dart`: passes.
 
 ## What's built but NOT verified (no toolchain existed to test it)
@@ -43,18 +53,6 @@ no Windows toolchain. Everything below is real, complete code, but
 - **Windows**: same — `wireguard_flutter` bundles real `WireGuardNT`
   binaries, app now requests admin elevation on launch (needed to create
   the tunnel service). Never compiled with an actual Windows toolchain.
-- **macOS WireGuard — the biggest unverified piece.** `wireguard_flutter`'s
-  macOS backend needs Apple's NetworkExtension framework, which needs a
-  separate Xcode target + paid Apple Developer Program membership. Instead,
-  built a **custom backend**: cross-compiled the real, official
-  `wireguard-go` (Apache-licensed, from `github.com/WireGuard/wireguard-go`)
-  for both `arm64`/`amd64`, bundled it, and wrote a Swift plugin
-  (`macos/Runner/WireGuardMacOS.swift`) that drives it directly via
-  WireGuard's documented UAPI socket protocol, elevated via a native admin-
-  password prompt. **This Swift code has never been compiled.** See
-  `WIREGUARD.md`'s "Why macOS doesn't use wireguard_flutter's own backend"
-  section for the exact spots most likely to need a fix (the interface-name
-  log-line regex, the elevated-process handling).
 - **CI workflow** (`.github/workflows/build-app.yml`): manual
   `workflow_dispatch` with checkboxes for macOS/Windows/Android/backend/all.
   Caches Flutter pub packages and Gradle. Had a real path bug in the
@@ -68,25 +66,22 @@ no Windows toolchain. Everything below is real, complete code, but
    (macOS/Windows/Android/backend) and fix whatever breaks — none of it
    has actually executed on GitHub's runners yet, only been reasoned
    through.
-2. **macOS WireGuard**: needs the one manual Xcode step first — add
-   `macos/Runner/Resources/wireguard-go/` to the Runner target's Copy
-   Bundle Resources (drag into Xcode, "Copy items if needed"). Then
-   `flutter run -d macos` and debug from real compiler/runtime errors.
-3. **Android/Windows real-device testing**: nobody has run this app on
+2. **Android/Windows real-device testing**: nobody has run this app on
    either platform yet. Expect friction — this is genuinely the first
-   time this code has met a real toolchain for either.
-4. **archangeld has no pairing endpoint** — the app's "Pair backend" and
+   time this code has met a real toolchain for either. (macOS is now
+   done — see above.)
+3. **archangeld has no pairing endpoint** — the app's "Pair backend" and
    "Pair device" (WireGuard) dialogs require pasting host/token or a
    wg-quick config by hand, because the backend has no `/api/v1/pair`-type
    route yet (only Milestone 1: health + terminal are built server-side —
    see `app/backend/README.md`). Files/Containers/Monitoring/DevOps
    screens are still 100% mock data (`lib/data/mock_data.dart`) for the
    same reason: no backend routes exist for them yet.
-5. **Terminal is not a full terminal emulator** — `TerminalSession`
+4. **Terminal is not a full terminal emulator** — `TerminalSession`
    renders raw output, no ANSI/VT100 escape sequence handling. Fine for
    plain shell use, will show garbage for `htop`/`vim`/colored output.
    The `xterm` Flutter package is the natural next layer if that's wanted.
-6. **macOS WireGuard routing is incomplete** — only the tunnel interface's
+5. **macOS WireGuard routing is incomplete** — only the tunnel interface's
    own address gets configured (`ifconfig`); `AllowedIPs` beyond that
    aren't routed. Fine for archangeld's typical narrow AllowedIPs, not for
    a full-tunnel `0.0.0.0/0` config. See `WireGuardMacOS.swift`'s

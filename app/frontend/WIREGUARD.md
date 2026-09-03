@@ -13,7 +13,7 @@ rather than a hand-rolled one), and a custom backend on macOS — see below.
 | Android | `VpnService` (`com.wireguard.android:tunnel`), via wireguard_flutter | Should work out of the box — real, maintained implementation, no manual setup beyond the `INTERNET` permission (already added). **Not yet run on a real device from this session.** |
 | Windows | Bundled `WireGuardNT` (`tunnel.dll`/`wireguard.dll`) run as a Windows service, via wireguard_flutter | Should work — the app now requests admin elevation on launch (`windows/runner/runner.exe.manifest`) since creating the service needs it. **Not yet run on real Windows.** |
 | Linux | wireguard_flutter shells out to `wg`/`wg-quick` via `sudo` | Verified end-to-end in this session (see below) — needs `wireguard-tools` installed and either passwordless sudo or an interactive terminal for the sudo prompt. |
-| macOS | **Custom**: a bundled, officially-sourced `wireguard-go` binary driven directly (`macos/Runner/WireGuardMacOS.swift`), not wireguard_flutter's darwin backend | **Compiled and run on real hardware.** Interface creation + UAPI configuration confirmed working (a utun interface came up with the right address); two real bugs found and fixed (daemonization, a process-tracking leak) — the fix itself hasn't been retested yet. See below. |
+| macOS | **Custom**: a bundled, officially-sourced `wireguard-go` binary driven directly (`macos/Runner/WireGuardMacOS.swift`), not wireguard_flutter's darwin backend | **Working, verified on real hardware.** After three rounds of real bugs found and fixed (daemonization, a process-tracking leak, a socket permission denial, a Swift compile error), the tunnel connects successfully end-to-end — top bar shows green/connected against a real server. See below for what's still open (routing beyond the interface's own address). |
 
 ### Why macOS doesn't use wireguard_flutter's own backend
 
@@ -62,7 +62,16 @@ while this app's own `connect()` call to it runs as the logged-in user —
 a straightforward permission denial, not a missing-file issue (the
 `waitForUapiSocket` existence check had already passed). Fixed with
 `relaxUapiSocketPermissions()`, an elevated `chmod` run right after the
-socket appears and before connecting to it. Not yet retested.
+socket appears and before connecting to it.
+
+**Third round: a real Swift compile error** — `Int8`/`UInt8` type mismatch
+copying the socket path into `sockaddr_un` (`withUnsafeMutableBytes`
+exposes raw `UInt8` regardless of `sun_path`'s own C `char`/`Int8` element
+type). Fixed by dropping the unnecessary `Int8(bitPattern:)` conversion.
+
+**✅ Confirmed working end-to-end after all of the above**: real device,
+real server, tunnel connects — top bar shows green/connected. This is the
+first fully-verified success for the macOS WireGuard path.
 
 **Still-open item, not yet touched:**
 - Routing: only the interface's own address is configured
