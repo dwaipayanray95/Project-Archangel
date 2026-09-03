@@ -13,7 +13,7 @@ rather than a hand-rolled one), and a custom backend on macOS — see below.
 | Android | `VpnService` (`com.wireguard.android:tunnel`), via wireguard_flutter | Should work out of the box — real, maintained implementation, no manual setup beyond the `INTERNET` permission (already added). **Not yet run on a real device from this session.** |
 | Windows | Bundled `WireGuardNT` (`tunnel.dll`/`wireguard.dll`) run as a Windows service, via wireguard_flutter | Should work — the app now requests admin elevation on launch (`windows/runner/runner.exe.manifest`) since creating the service needs it. **Not yet run on real Windows.** |
 | Linux | wireguard_flutter shells out to `wg`/`wg-quick` via `sudo` | Verified end-to-end in this session (see below) — needs `wireguard-tools` installed and either passwordless sudo or an interactive terminal for the sudo prompt. |
-| macOS | **Custom**: a bundled, officially-sourced `wireguard-go` binary driven directly (`macos/Runner/WireGuardMacOS.swift`), not wireguard_flutter's darwin backend | Tunnel connects (top bar shows green) after real bugs found via hardware testing (daemonization, a process-tracking leak, a socket permission denial, a Swift compile error) — but that green status didn't mean traffic could actually reach the server: a missing route was the next real blocker. Just fixed, **not yet retested**. See below. |
+| macOS | **Custom**: a bundled, officially-sourced `wireguard-go` binary driven directly (`macos/Runner/WireGuardMacOS.swift`), not wireguard_flutter's darwin backend | **Working, verified end-to-end on real hardware** — tunnel connects and a real Terminal shell session opens against the real deployed server. Five real bugs found and fixed via actual device testing along the way; see below for the full history and one remaining rough edge. |
 
 ### Why macOS doesn't use wireguard_flutter's own backend
 
@@ -88,7 +88,26 @@ surface it as a real, live blocker rather than a theoretical one. Fixed:
 <ifname>` for each entry in the config's `AllowedIPs` (skipping a
 full-tunnel `0.0.0.0/0`, which still needs more care to avoid breaking
 the Mac's normal internet access — not archangeld's use case, which uses
-a narrow AllowedIPs). **Not yet retested.**
+a narrow AllowedIPs).
+
+**✅ Confirmed working end-to-end**: real device, real deployed server,
+real Terminal shell session opened over the tunnel this app's own
+WireGuard backend manages. (One rough edge: the very first connect
+attempt after this fix needed a manual reconnect before Terminal picked
+up the new route — worth a look as a follow-up, see below.)
+
+**Remaining known rough edges:**
+- The first connect attempt right after a fresh app launch may need a
+  manual Reconnect before Terminal traffic flows — seen once, not yet
+  root-caused (candidate: a race between the route being added and the
+  app's own retry/connect timing; hasn't recurred on subsequent
+  reconnects within the same session).
+- Full-tunnel `0.0.0.0/0` `AllowedIPs` still isn't routed (see above) —
+  fine for archangeld's own narrow `AllowedIPs`, not a general-purpose
+  WireGuard client yet.
+- Three separate admin password prompts per connect (launch
+  `wireguard-go`, relax socket permissions, configure the route) — works,
+  but worth consolidating into fewer prompts as a UX pass later.
 
 **If you're picking this up after a previous failed attempt**, check for
 and clean up leaked root processes first: `ps aux | grep wireguard-go`,
