@@ -89,4 +89,20 @@ class ArchangeldConnection extends ChangeNotifier {
     }
     return Uri.parse('http://$_host/api/v1/system/processes');
   }
+
+  /// `http://<host>/api/v1/system/processes/{pid}/kill`
+  Uri processKillHttpUri(int pid) {
+    if (!isPaired) {
+      throw StateError('Not paired with a backend');
+    }
+    return Uri.parse('http://$_host/api/v1/system/processes/$pid/kill');
+  }
+
+  /// `http://<host>/api/v1/system/processes/{pid}/renice`
+  Uri processReniceHttpUri(int pid) {
+    if (!isPaired) {
+      throw StateError('Not paired with a backend');
+    }
+    return Uri.parse('http://$_host/api/v1/system/processes/$pid/renice');
+  }
 }

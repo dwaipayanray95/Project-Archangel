@@ -476,10 +476,18 @@ class _ProcessTable extends StatelessWidget {
                             width: 96,
                             child: Row(
                               mainAxisAlignment: MainAxisAlignment.end,
-                              children: const [
-                                AxGhostButton(label: 'renice'),
-                                SizedBox(width: 5),
-                                AxGhostButton(label: 'kill', color: AxColors.bad, borderColor: Color(0x4CE5806B)),
+                              children: [
+                                AxGhostButton(
+                                  label: 'renice',
+                                  onTap: () => _showReniceDialog(context, p),
+                                ),
+                                const SizedBox(width: 5),
+                                AxGhostButton(
+                                  label: 'kill',
+                                  color: AxColors.bad,
+                                  borderColor: const Color(0x4CE5806B),
+                                  onTap: () => _showKillDialog(context, p),
+                                ),
                               ],
                             ),
                           ),
@@ -491,6 +499,127 @@ class _ProcessTable extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  void _showKillDialog(BuildContext context, ProcInfo proc) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AxColors.s1,
+        title: Text('Kill Process', style: AxTextStyles.h2),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Are you sure you want to terminate this process?', style: AxTextStyles.sans),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: AxColors.s2,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AxColors.line),
+              ),
+              child: Row(
+                children: [
+                  Text('PID ${proc.pid}', style: AxTextStyles.mono.copyWith(color: AxColors.accent, fontWeight: FontWeight.bold)),
+                  const SizedBox(width: 10),
+                  Expanded(child: Text(proc.name, style: AxTextStyles.mono, overflow: TextOverflow.ellipsis)),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text('Cancel', style: AxTextStyles.sans.copyWith(color: AxColors.fg3)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: AxColors.bad),
+            onPressed: () async {
+              Navigator.pop(ctx);
+              final ok = await context.read<MonitoringService>().killProcess(proc.pid);
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(ok ? 'Process ${proc.pid} killed' : 'Failed to kill process ${proc.pid}'),
+                    backgroundColor: ok ? AxColors.s2 : AxColors.bad,
+                  ),
+                );
+              }
+            },
+            child: const Text('Kill Process', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showReniceDialog(BuildContext context, ProcInfo proc) {
+    int selectedPrio = 0;
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDlgState) => AlertDialog(
+          backgroundColor: AxColors.s1,
+          title: Text('Renice Process', style: AxTextStyles.h2),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Adjust scheduling priority for PID ${proc.pid} (${proc.name}):', style: AxTextStyles.sans),
+              const SizedBox(height: 14),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('Priority (niceness):', style: AxTextStyles.label),
+                  Text('$selectedPrio', style: AxTextStyles.mono.copyWith(fontSize: 16, color: AxColors.accent, fontWeight: FontWeight.bold)),
+                ],
+              ),
+              Slider(
+                value: selectedPrio.toDouble(),
+                min: -20,
+                max: 19,
+                divisions: 39,
+                activeColor: AxColors.accent,
+                onChanged: (val) => setDlgState(() => selectedPrio = val.round()),
+              ),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('-20 (Highest)', style: AxTextStyles.mono.copyWith(fontSize: 10, color: AxColors.warn)),
+                  Text('0 (Normal)', style: AxTextStyles.mono.copyWith(fontSize: 10, color: AxColors.fg3)),
+                  Text('+19 (Lowest)', style: AxTextStyles.mono.copyWith(fontSize: 10, color: AxColors.accent)),
+                ],
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: Text('Cancel', style: AxTextStyles.sans.copyWith(color: AxColors.fg3)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: AxColors.accent),
+              onPressed: () async {
+                Navigator.pop(ctx);
+                final ok = await context.read<MonitoringService>().reniceProcess(proc.pid, selectedPrio);
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(ok ? 'Process ${proc.pid} reniced to $selectedPrio' : 'Failed to renice process ${proc.pid}'),
+                      backgroundColor: ok ? AxColors.s2 : AxColors.bad,
+                    ),
+                  );
+                }
+              },
+              child: const Text('Apply', style: TextStyle(color: Colors.black)),
+            ),
+          ],
+        ),
       ),
     );
   }

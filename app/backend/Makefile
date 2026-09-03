@@ -5,13 +5,16 @@
 # binary is being able to scp one file to the server with zero runtime
 # dependencies, so this isn't optional.
 
+VERSION ?= $(shell cat ../../VERSION 2>/dev/null || echo "1.1.0")
+LDFLAGS = -ldflags "-X 'github.com/dwaipayanray95/project-archangel/backend/internal/version.Version=$(VERSION)'"
+
 # AMD Micro box (Archangel-Mk1)
 build-linux-amd64:
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/archangeld-amd64 ./cmd/archangeld
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o bin/archangeld-amd64 ./cmd/archangeld
 
 # Ampere A1 box, once allocated
 build-linux-arm64:
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o bin/archangeld-arm64 ./cmd/archangeld
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build $(LDFLAGS) -o bin/archangeld-arm64 ./cmd/archangeld
 
 run:
 	go run ./cmd/archangeld -config config.yaml
