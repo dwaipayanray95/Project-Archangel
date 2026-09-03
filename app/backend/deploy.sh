@@ -94,7 +94,7 @@ REMOTE
 echo ""
 
 echo "==> [5/7] Server config"
-if ssh_cmd '[[ -f /etc/archangel/config.yaml ]]' 2>/dev/null; then
+if ssh_cmd 'sudo test -f /etc/archangel/config.yaml'; then
   echo "    /etc/archangel/config.yaml already exists - leaving the existing"
   echo "    token in place (regenerating it here would silently break an"
   echo "    already-paired app). Delete it on the server first if you"

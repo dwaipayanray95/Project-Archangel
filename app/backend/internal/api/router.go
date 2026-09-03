@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/dwaipayanray95/project-archangel/backend/internal/auth"
+	"github.com/dwaipayanray95/project-archangel/backend/internal/system"
 	"github.com/dwaipayanray95/project-archangel/backend/internal/terminal"
 )
 
@@ -23,8 +24,13 @@ func NewRouter(verify auth.Verifier) http.Handler {
 
 	mux.Handle("GET /ws/terminal", auth.Middleware(verify, http.HandlerFunc(terminal.Handler)))
 
+	// System metrics, processes, and live stats stream
+	mux.Handle("GET /api/v1/system/metrics", auth.Middleware(verify, http.HandlerFunc(system.MetricsHandler)))
+	mux.Handle("GET /api/v1/system/processes", auth.Middleware(verify, http.HandlerFunc(system.ProcessesHandler)))
+	mux.Handle("GET /ws/stats", auth.Middleware(verify, http.HandlerFunc(system.StatsWsHandler)))
+
 	// Milestones 2-4 add their routes here: /api/v1/files/*,
-	// /api/v1/services/*, /ws/stats, /api/v1/docker/*, /api/v1/oci/*.
+	// /api/v1/services/*, /api/v1/docker/*, /api/v1/oci/*.
 
 	return withLogging(mux)
 }
