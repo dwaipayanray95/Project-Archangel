@@ -40,6 +40,7 @@ dependencies:
   flutter_secure_storage: ^10.3.1
   web_socket_channel: ^3.0.3
   mobile_scanner: ^7.4.0
+  dartssh2: ^4.0.1
 
 dev_dependencies:
   flutter_test:
@@ -62,6 +63,18 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+  # Copies of infra/scripts/*.sh + app/backend/archangel.service, bundled
+  # so the in-app VPS setup wizard (lib/services/vps_setup_service.dart)
+  # can SFTP them onto a fresh server and run them - see that file's doc
+  # comment for why these are copies, not a shared path, and how to keep
+  # them in sync.
+  assets:
+    - assets/setup_scripts/baseline_setup.sh
+    - assets/setup_scripts/wireguard_setup.sh
+    - assets/setup_scripts/allow_port_before_reject.sh
+    - assets/setup_scripts/ensure_boot_fw_fixup.sh
+    - assets/setup_scripts/archangel.service
 
   # To add assets to your application, add an assets section, like this:
   # assets:
