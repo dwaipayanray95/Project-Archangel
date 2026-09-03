@@ -1,0 +1,39 @@
+[Unit]
+Description=Project Archangel control plane
+After=network-online.target wg-quick@wg0.service
+Wants=network-online.target
+Requires=wg-quick@wg0.service
+
+[Service]
+Type=simple
+ExecStart=/opt/archangel/archangeld -config /etc/archangel/config.yaml
+Restart=on-failure
+RestartSec=5
+User=archangel
+Group=archangel
+
+# Resource limits - OS-level backstop for the in-app watchdog (Milestone 3):
+# if the watchdog itself misbehaves, systemd is still the last line of
+# defense against this process eating the whole 1GB box.
+MemoryMax=150M
+MemoryHigh=120M
+CPUQuota=50%
+TasksMax=100
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+# ReadOnlyPaths, not ReadWritePaths: the daemon only ever reads
+# config.yaml at startup, and Milestone 1 logs to stdout/journald only -
+# no code path writes to disk anywhere, so no write grant is needed
+# (least privilege: grant write access when a real need exists, not
+# speculatively). /var/log/archangel isn't listed at all for the same
+# reason - add it back if/when Milestone 3's watchdog needs to write logs.
+ReadOnlyPaths=/etc/archangel
+# File browser (Milestone 2) needs to read the configured files_root -
+# add a ReadOnlyPaths (or ReadWritePaths, if it needs to write/delete
+# files) entry covering that root once it's set in config.yaml, rather
+# than disabling ProtectHome wholesale.
+
+[Install]
+WantedBy=multi-user.target
