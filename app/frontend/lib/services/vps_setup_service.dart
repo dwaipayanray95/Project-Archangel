@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:flutter/services.dart' show rootBundle;
 
 import 'pairing_bundle.dart';
@@ -233,11 +236,22 @@ port: ${config.appPort}
 public_endpoint: "$publicIp:${config.wgPort}"
 files_root: ""
 ''';
+
+    // Uploaded via SFTP (raw bytes, no shell parsing of the content at
+    // all) rather than spliced into a heredoc - config.yaml's content
+    // includes config.wgSubnet, a free-text field from the wizard's
+    // "Advanced" section. A value containing a line that reads exactly
+    // the heredoc's own delimiter would terminate it early and run
+    // whatever followed as arbitrary shell as root - the same class of
+    // bug the setup scripts themselves already avoid by being uploaded,
+    // not inlined. Move the uploaded file into place with a second,
+    // fixed (non-interpolated) command.
+    final tmpPath = '$_remoteScriptDir/config.yaml';
+    await _ssh.uploadFile(tmpPath, Uint8List.fromList(utf8.encode(configYaml)));
+
     final script = '''
 set -e
-sudo tee /etc/archangel/config.yaml > /dev/null <<'CONF'
-$configYaml
-CONF
+sudo mv $tmpPath /etc/archangel/config.yaml
 sudo chown root:archangel /etc/archangel/config.yaml
 sudo chmod 640 /etc/archangel/config.yaml
 ''';

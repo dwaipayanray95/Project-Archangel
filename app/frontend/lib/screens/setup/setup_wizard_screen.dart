@@ -5,6 +5,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:provider/provider.dart';
 
 import '../../services/archangeld_connection.dart';
+import '../../services/local_auth_service.dart';
 import '../../services/pairing_bundle.dart';
 import '../../services/ssh_transport.dart';
 import '../../services/vps_setup_service.dart';
@@ -31,6 +32,14 @@ class SetupWizardScreen extends StatefulWidget {
 
 enum _WizardStep { connect, progress, done }
 
+// Three dot-separated non-negative integers, e.g. "10.10.0" - the first
+// three octets of a WireGuard subnet. Rejecting anything else here
+// before it ever reaches VpsSetupService is defense in depth: that
+// service also now writes config.yaml via SFTP rather than an
+// interpolated shell heredoc specifically so a value that fails this
+// check anyway can't do worse than fail cleanly.
+final _wgSubnetPattern = RegExp(r'^\d{1,3}\.\d{1,3}\.\d{1,3}$');
+
 class _SetupWizardScreenState extends State<SetupWizardScreen> {
   _WizardStep _step = _WizardStep.connect;
 
@@ -51,6 +60,8 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
   final List<SetupProgress> _log = [];
   Object? _runError;
   PairingBundle? _bundle;
+  bool _pairing = false;
+  String? _pairError;
 
   static String _defaultDeviceName() {
     if (Platform.isMacOS) return 'mac';
@@ -67,6 +78,18 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
   }
 
   Future<void> _restoreSavedKey() async {
+    final hasSavedKey = await _secureStorage.containsKey(key: _kSshPrivateKeyKey);
+    if (!hasSavedKey) return;
+
+    // Gate reading the actual key value behind an OS-level re-auth
+    // prompt - it grants root on the VPS, so a device left unlocked
+    // shouldn't hand it over just by opening this screen. Degrades to
+    // "allow" on platforms/devices with nothing enrolled - see
+    // LocalAuthService's own doc comment for why that's not a
+    // regression.
+    final authorized = await LocalAuthService().authenticate('Unlock your saved SSH key');
+    if (!mounted || !authorized) return;
+
     final host = await _secureStorage.read(key: _kSshHostKey);
     final username = await _secureStorage.read(key: _kSshUsernameKey);
     final key = await _secureStorage.read(key: _kSshPrivateKeyKey);
@@ -101,6 +124,12 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
       return;
     }
 
+    final wgSubnet = _wgSubnetController.text.trim();
+    if (wgSubnet.isNotEmpty && !_wgSubnetPattern.hasMatch(wgSubnet)) {
+      setState(() => _connectError = 'WireGuard subnet must be three dot-separated numbers, e.g. 10.10.0');
+      return;
+    }
+
     setState(() {
       _connecting = true;
       _connectError = null;
@@ -112,6 +141,7 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
         port: 22,
         username: username,
         privateKeyPem: privateKey,
+        onUnknownHostKey: _confirmHostKey,
       );
 
       if (_rememberKey) {
@@ -140,6 +170,76 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
     }
   }
 
+  /// Shown the first time we connect to a host (routine) or whenever a
+  /// previously-trusted host's key has changed (`isMismatch: true` -
+  /// never auto-accept this case, it's the one that actually looks like
+  /// an attacker). See ssh_transport.dart's HostKeyPrompt/KnownHosts.
+  Future<bool> _confirmHostKey({
+    required String host,
+    required String keyType,
+    required String fingerprint,
+    required bool isMismatch,
+  }) async {
+    if (!mounted) return false;
+    final accepted = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        backgroundColor: AxColors.s2,
+        title: Text(
+          isMismatch ? 'Server key changed!' : 'Verify server identity',
+          style: AxTextStyles.sans.copyWith(
+            fontSize: 15,
+            fontWeight: FontWeight.w700,
+            color: isMismatch ? AxColors.bad : null,
+          ),
+        ),
+        content: SizedBox(
+          width: 420,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (isMismatch)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: Text(
+                    'This host previously presented a different key. This could mean the '
+                    'server was rebuilt - or that something is intercepting this connection. '
+                    'Only continue if you\'re certain.',
+                    style: AxTextStyles.sans.copyWith(fontSize: 12.5, color: AxColors.bad, height: 1.5),
+                  ),
+                )
+              else
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: Text(
+                    'First connection to $host - verify this fingerprint matches what your '
+                    'cloud provider shows for this server before continuing.',
+                    style: AxTextStyles.sans.copyWith(fontSize: 12.5, color: AxColors.fg2, height: 1.5),
+                  ),
+                ),
+              Text('$keyType key fingerprint', style: AxTextStyles.sans.copyWith(fontSize: 11, color: AxColors.fg3)),
+              const SizedBox(height: 4),
+              SelectableText(fingerprint, style: AxTextStyles.mono.copyWith(fontSize: 12.5)),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(
+              isMismatch ? 'Trust anyway' : 'Trust this server',
+              style: TextStyle(color: isMismatch ? AxColors.bad : null),
+            ),
+          ),
+        ],
+      ),
+    );
+    return accepted ?? false;
+  }
+
   void _runSetup() {
     final config = VpsSetupConfig(
       deviceName: _deviceNameController.text.trim().isEmpty ? _defaultDeviceName() : _deviceNameController.text.trim(),
@@ -164,14 +264,28 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
 
   Future<void> _enterArchangel() async {
     final bundle = _bundle;
-    if (bundle == null) return;
-    final wg = context.read<WireGuardController>();
-    final backend = context.read<ArchangeldConnection>();
-    await wg.pair(bundle.tunnel.toWgQuickConfig());
-    await backend.pair(host: bundle.host, token: bundle.token);
-    // The app's root router watches both of these and swaps to the main
-    // shell automatically once isPaired becomes true - no manual
-    // navigation needed here.
+    if (bundle == null || _pairing) return;
+
+    setState(() {
+      _pairing = true;
+      _pairError = null;
+    });
+
+    try {
+      final wg = context.read<WireGuardController>();
+      final backend = context.read<ArchangeldConnection>();
+      await wg.pair(bundle.tunnel.toWgQuickConfig());
+      await backend.pair(host: bundle.host, token: bundle.token);
+      // The app's root router watches both of these and swaps to the main
+      // shell automatically once isPaired becomes true - no manual
+      // navigation needed here.
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _pairing = false;
+        _pairError = 'Could not finish pairing: $e. The server is set up - tap to try again.';
+      });
+    }
   }
 
   @override
@@ -353,13 +467,20 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
                 textAlign: TextAlign.center,
                 style: AxTextStyles.sans.copyWith(fontSize: 13, color: AxColors.fg2, height: 1.5),
               ),
+              if (_pairError != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 12),
+                  child: Text(_pairError!, textAlign: TextAlign.center, style: AxTextStyles.mono.copyWith(fontSize: 11.5, color: AxColors.bad)),
+                ),
               const SizedBox(height: 24),
               SizedBox(
                 width: double.infinity,
                 height: 44,
                 child: FilledButton(
-                  onPressed: _enterArchangel,
-                  child: const Text('Enter Archangel'),
+                  onPressed: _pairing ? null : _enterArchangel,
+                  child: _pairing
+                      ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Text('Enter Archangel'),
                 ),
               ),
             ],

@@ -3,6 +3,50 @@ import 'dart:typed_data';
 
 import 'package:dartssh2/dartssh2.dart';
 
+import 'known_hosts.dart';
+
+/// Called when a host's SSH key is either seen for the first time, or
+/// doesn't match a previously trusted fingerprint for that host. Return
+/// true to trust it (and, for a first-time host, remember it for next
+/// time) or false to abort the connection. [isMismatch] distinguishes
+/// "never seen this host before" from "this host's key changed since we
+/// last trusted it" - callers should render the latter as a much
+/// stronger warning, since it's the one that actually indicates a
+/// possible attacker rather than routine first use.
+typedef HostKeyPrompt = Future<bool> Function({
+  required String host,
+  required String keyType,
+  required String fingerprint,
+  required bool isMismatch,
+});
+
+/// The trust-on-first-use decision itself, factored out of
+/// [Dartssh2Transport.connect]'s `SSHClient` wiring so it can be unit-
+/// tested without a real SSH connection (dartssh2 gives no seam to fake
+/// the handshake itself). See [HostKeyPrompt]'s doc comment for what
+/// each case means.
+Future<bool> resolveHostKeyTrust({
+  required KnownHosts knownHosts,
+  required String host,
+  required String keyType,
+  required String fingerprint,
+  required HostKeyPrompt onUnknownHostKey,
+}) async {
+  final trusted = await knownHosts.get(host);
+  if (trusted == fingerprint) return true;
+
+  final accepted = await onUnknownHostKey(
+    host: host,
+    keyType: keyType,
+    fingerprint: fingerprint,
+    isMismatch: trusted != null,
+  );
+  if (accepted) {
+    await knownHosts.trust(host, fingerprint);
+  }
+  return accepted;
+}
+
 /// Result of one remote command execution.
 class SshExecResult {
   final int exitCode;
@@ -35,24 +79,37 @@ class Dartssh2Transport implements SshTransport {
 
   Dartssh2Transport._(this._client);
 
-  /// Connects and authenticates with a pasted PEM private key. Host key
-  /// verification is intentionally left to dartssh2's default (accept any
-  /// key) for now - this is a brand-new VPS the user is bootstrapping for
-  /// the first time, so there is no known-hosts entry to check against yet;
-  /// TOFU-pinning the key for future reconnects is a reasonable follow-up,
-  /// not something to block first-run setup on.
+  /// Connects and authenticates with a pasted PEM private key.
+  ///
+  /// Host key verification uses trust-on-first-use (TOFU, the same model
+  /// OpenSSH's own known_hosts uses): the first connection to [host] asks
+  /// [onUnknownHostKey] to confirm the key and remembers its fingerprint
+  /// via [KnownHosts]; every later connection compares against that
+  /// stored fingerprint and calls [onUnknownHostKey] again with
+  /// `isMismatch: true` if it's changed - which the caller must never
+  /// auto-accept, since it's the one case that actually looks like an
+  /// attacker rather than routine first use.
   static Future<Dartssh2Transport> connect({
     required String host,
     required int port,
     required String username,
     required String privateKeyPem,
+    required HostKeyPrompt onUnknownHostKey,
     String? passphrase,
   }) async {
+    final knownHosts = KnownHosts();
     final socket = await SSHSocket.connect(host, port, timeout: const Duration(seconds: 15));
     final client = SSHClient(
       socket,
       username: username,
       identities: SSHKeyPair.fromPem(privateKeyPem, passphrase),
+      onVerifyHostKey: (type, fingerprintBytes) => resolveHostKeyTrust(
+        knownHosts: knownHosts,
+        host: host,
+        keyType: type,
+        fingerprint: utf8.decode(fingerprintBytes),
+        onUnknownHostKey: onUnknownHostKey,
+      ),
     );
     await client.authenticated;
     return Dartssh2Transport._(client);
