@@ -26,12 +26,16 @@ import (
 	"github.com/dwaipayanray95/project-archangel/backend/internal/config"
 	"github.com/dwaipayanray95/project-archangel/backend/internal/terminal"
 	"github.com/dwaipayanray95/project-archangel/backend/internal/tokenstore"
+	"github.com/dwaipayanray95/project-archangel/backend/internal/version"
 	"github.com/dwaipayanray95/project-archangel/backend/internal/wgpeer"
 )
 
 func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
+		case "version", "-v", "--version":
+			fmt.Printf("archangeld v%s\n", version.Version)
+			return
 		case "gen-token":
 			runGenToken()
 			return

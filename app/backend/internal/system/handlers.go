@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -45,6 +46,73 @@ func ProcessesHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(procs)
+}
+
+type killRequest struct {
+	Force bool `json:"force"`
+}
+
+// ProcessKillHandler handles POST /api/v1/system/processes/{pid}/kill
+func ProcessKillHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	pidStr := r.PathValue("pid")
+	pid, err := strconv.Atoi(pidStr)
+	if err != nil {
+		http.Error(w, "invalid pid", http.StatusBadRequest)
+		return
+	}
+
+	var req killRequest
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&req)
+	}
+
+	if err := KillProcess(pid, req.Force); err != nil {
+		slog.Warn("kill process failed", "pid", pid, "err", err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "pid": pid})
+}
+
+type reniceRequest struct {
+	Priority int `json:"priority"`
+}
+
+// ProcessReniceHandler handles POST /api/v1/system/processes/{pid}/renice
+func ProcessReniceHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	pidStr := r.PathValue("pid")
+	pid, err := strconv.Atoi(pidStr)
+	if err != nil {
+		http.Error(w, "invalid pid", http.StatusBadRequest)
+		return
+	}
+
+	var req reniceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if err := ReniceProcess(pid, req.Priority); err != nil {
+		slog.Warn("renice process failed", "pid", pid, "err", err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "pid": pid, "priority": req.Priority})
 }
 
 // StatsWsHandler handles GET /ws/stats for live streaming metrics

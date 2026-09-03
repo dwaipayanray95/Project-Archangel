@@ -10,6 +10,7 @@ import (
 	"github.com/dwaipayanray95/project-archangel/backend/internal/auth"
 	"github.com/dwaipayanray95/project-archangel/backend/internal/system"
 	"github.com/dwaipayanray95/project-archangel/backend/internal/terminal"
+	"github.com/dwaipayanray95/project-archangel/backend/internal/version"
 )
 
 // NewRouter builds the full route table. verify decides whether a
@@ -27,6 +28,8 @@ func NewRouter(verify auth.Verifier) http.Handler {
 	// System metrics, processes, and live stats stream
 	mux.Handle("GET /api/v1/system/metrics", auth.Middleware(verify, http.HandlerFunc(system.MetricsHandler)))
 	mux.Handle("GET /api/v1/system/processes", auth.Middleware(verify, http.HandlerFunc(system.ProcessesHandler)))
+	mux.Handle("POST /api/v1/system/processes/{pid}/kill", auth.Middleware(verify, http.HandlerFunc(system.ProcessKillHandler)))
+	mux.Handle("POST /api/v1/system/processes/{pid}/renice", auth.Middleware(verify, http.HandlerFunc(system.ProcessReniceHandler)))
 	mux.Handle("GET /ws/stats", auth.Middleware(verify, http.HandlerFunc(system.StatsWsHandler)))
 
 	// Milestones 2-4 add their routes here: /api/v1/files/*,
@@ -37,5 +40,8 @@ func NewRouter(verify auth.Verifier) http.Handler {
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"status":  "ok",
+		"version": version.Version,
+	})
 }

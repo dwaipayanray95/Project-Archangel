@@ -159,6 +159,44 @@ class MonitoringService extends ChangeNotifier {
     } catch (_) {}
   }
 
+  Future<bool> killProcess(int pid, {bool force = false}) async {
+    if (_backend == null || !_backend!.isPaired) return false;
+    try {
+      final res = await http.post(
+        _backend!.processKillHttpUri(pid),
+        headers: {
+          'X-Archangel-Token': _backend!.token!,
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({'force': force}),
+      );
+      if (res.statusCode == 200) {
+        await fetchProcesses();
+        return true;
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  Future<bool> reniceProcess(int pid, int priority) async {
+    if (_backend == null || !_backend!.isPaired) return false;
+    try {
+      final res = await http.post(
+        _backend!.processReniceHttpUri(pid),
+        headers: {
+          'X-Archangel-Token': _backend!.token!,
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({'priority': priority}),
+      );
+      if (res.statusCode == 200) {
+        await fetchProcesses();
+        return true;
+      }
+    } catch (_) {}
+    return false;
+  }
+
   @override
   void dispose() {
     stop();

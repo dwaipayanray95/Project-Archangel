@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../data/app_state.dart';
+import '../services/app_version.dart';
 import '../services/archangeld_connection.dart';
 import '../services/tunnel_config.dart';
 import '../services/wireguard_controller.dart';
@@ -14,8 +15,10 @@ class SettingsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final app = context.watch<AppState>();
-    final aboutRows = const [
-      ['Agent', 'archangeld 0.9.4'],
+    final ver = AppVersion.current;
+    final aboutRows = [
+      ['App version', 'v$ver'],
+      ['Agent', 'archangeld v$ver'],
       ['Host', 'Archangel-MK1'],
       ['Paired devices', '1'],
       ['License', 'personal use'],
@@ -28,7 +31,7 @@ class SettingsScreen extends StatelessWidget {
         children: [
           Text('Settings', style: AxTextStyles.h1),
           const SizedBox(height: 3),
-          Text('archangeld 0.9.4 · paired 1 device', style: AxTextStyles.mutedMono),
+          Text('Archangel v$ver · paired 1 device', style: AxTextStyles.mutedMono),
           const SizedBox(height: 16),
           LayoutBuilder(
             builder: (context, c) {

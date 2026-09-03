@@ -71,6 +71,7 @@ flutter:
   # comment for why these are copies, not a shared path, and how to keep
   # them in sync.
   assets:
+    - assets/VERSION
     - assets/setup_scripts/baseline_setup.sh
     - assets/setup_scripts/wireguard_setup.sh
     - assets/setup_scripts/allow_port_before_reject.sh

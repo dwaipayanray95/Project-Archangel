@@ -190,3 +190,44 @@ func fallbackProcesses() ProcessListResponse {
 		Processes:  procs,
 	}
 }
+
+// KillProcess sends SIGTERM or SIGKILL to a process, preventing self-kill and PID 1 kill.
+func KillProcess(pid int, force bool) error {
+	if pid <= 1 {
+		return fmt.Errorf("refusing to kill system process PID %d", pid)
+	}
+	if pid == os.Getpid() {
+		return fmt.Errorf("refusing to kill archangeld itself")
+	}
+
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return fmt.Errorf("process %d not found: %w", pid, err)
+	}
+
+	sig := syscall.SIGTERM
+	if force {
+		sig = syscall.SIGKILL
+	}
+
+	if err := proc.Signal(sig); err != nil {
+		return fmt.Errorf("failed sending signal %v to process %d: %w", sig, pid, err)
+	}
+	return nil
+}
+
+// ReniceProcess sets scheduling niceness (-20 to 19).
+func ReniceProcess(pid int, priority int) error {
+	if pid <= 1 {
+		return fmt.Errorf("refusing to renice system process PID %d", pid)
+	}
+	if priority < -20 || priority > 19 {
+		return fmt.Errorf("priority must be between -20 and 19, got %d", priority)
+	}
+
+	// Use syscall / setpriority
+	if err := syscall.Setpriority(syscall.PRIO_PROCESS, pid, priority); err != nil {
+		return fmt.Errorf("failed setting priority %d for process %d: %w", priority, pid, err)
+	}
+	return nil
+}
