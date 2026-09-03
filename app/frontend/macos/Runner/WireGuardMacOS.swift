@@ -231,8 +231,11 @@ class WireGuardMacOS: NSObject {
         addr.sun_family = sa_family_t(AF_UNIX)
         let pathBytes = Array(socketPath.utf8)
         withUnsafeMutableBytes(of: &addr.sun_path) { ptr in
+            // withUnsafeMutableBytes exposes raw UInt8 regardless of
+            // sun_path's own element type (C `char`/Int8) - assign the
+            // utf8 bytes (already UInt8) directly, no conversion needed.
             for (i, b) in pathBytes.enumerated() where i < ptr.count - 1 {
-                ptr[i] = Int8(bitPattern: b)
+                ptr[i] = b
             }
         }
         let size = MemoryLayout<sockaddr_un>.size
