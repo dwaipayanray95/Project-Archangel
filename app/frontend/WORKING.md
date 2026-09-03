@@ -30,16 +30,20 @@ summary below.
 - **WireGuard state machine on Linux**: real `wireguard_flutter` package,
   real failure path exercised (no `wg`/sudo in that sandbox → surfaced
   correctly as "unsupported" in both the top bar and Settings, no crash).
-- **macOS WireGuard — fully working, real device, real server.** The
-  custom `wireguard-go`-based backend connects end-to-end (top bar shows
-  green/connected). Took four rounds of real bugs found via actual
-  hardware testing and fixed: `wireguard-go` daemonizing by default
-  (detached it from our log/PID tracking), `disconnect()` killing the
-  wrong process (leaked root processes), a UAPI socket permission
-  denial, and one real Swift compile error (`Int8`/`UInt8` mismatch).
-  Full history in `WIREGUARD.md`. Not yet touched: routing beyond the
-  interface's own address (fine for archangeld's narrow `AllowedIPs`,
-  not for a full-tunnel `0.0.0.0/0` config).
+- **macOS WireGuard, end-to-end, for real** — the strongest verification
+  in this repo alongside the Terminal proof above: real device, real
+  deployed server, a real Terminal shell session opened over the tunnel
+  this app's own custom `wireguard-go`-based backend manages (not a VPN
+  client running alongside it — this app *is* the VPN client). Took five
+  rounds of real bugs found via actual hardware testing: `wireguard-go`
+  daemonizing by default, `disconnect()` killing the wrong process
+  (leaked root processes), a UAPI socket permission denial, a Swift
+  compile error, and — the one that made "tunnel shows green" not mean
+  "traffic can reach the server" — a missing route for the peer's
+  address. Full history in `WIREGUARD.md`, including small remaining
+  rough edges (an unexplained first-connect-needs-a-reconnect quirk,
+  three admin prompts per connect, full-tunnel `0.0.0.0/0` still
+  unhandled).
 - `flutter analyze`: clean. `flutter test test/widget_test.dart`: passes.
 
 ## What's built but NOT verified (no toolchain existed to test it)
