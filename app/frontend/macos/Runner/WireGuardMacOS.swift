@@ -163,7 +163,13 @@ class WireGuardMacOS: NSObject {
         try task.run()
         task.waitUntilExit()
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        let names = String(decoding: data, as: UTF8.self).split(separator: " ")
+        // `ifconfig -l`'s last name carries a trailing newline (e.g.
+        // "...utun3 utun4\n") - Int("4\n") fails to parse in Swift, which
+        // silently dropped the highest-numbered utun from usedNumbers and
+        // made this always recompute exactly the interface that was
+        // actually taken. Splitting on any whitespace (not just a literal
+        // " ") strips that trailing newline along with the rest.
+        let names = String(decoding: data, as: UTF8.self).split(whereSeparator: { $0 == " " || $0.isNewline })
         let usedNumbers = names.compactMap { name -> Int? in
             guard name.hasPrefix("utun") else { return nil }
             return Int(name.dropFirst(4))
