@@ -5,6 +5,7 @@ import '../services/archangeld_connection.dart';
 import '../services/terminal_session.dart';
 import '../theme/tokens.dart';
 import '../widgets/ax_widgets.dart';
+import '../widgets/pairing_dialog.dart';
 
 class TerminalScreen extends StatefulWidget {
   const TerminalScreen({super.key});
@@ -291,7 +292,7 @@ class _UnpairedPrompt extends StatelessWidget {
               Text('No backend paired', style: AxTextStyles.sans.copyWith(fontSize: 14, fontWeight: FontWeight.w700)),
               const SizedBox(height: 6),
               Text(
-                'Terminal needs archangeld\'s host and auth token (from `archangeld gen-token` on the server) to open a real shell session.',
+                'Terminal needs a paired backend to open a real shell session. Run `archangeld pair <name>` on the server and paste (or scan) the code it prints.',
                 style: AxTextStyles.sans.copyWith(fontSize: 12.5, color: AxColors.fg2, height: 1.5),
               ),
               const SizedBox(height: 14),
@@ -318,79 +319,9 @@ class _UnpairedPrompt extends StatelessWidget {
   }
 
   void _showPairDialog(BuildContext context, VoidCallback onPaired) {
-    final backend = context.read<ArchangeldConnection>();
-    final hostController = TextEditingController(text: '10.8.0.1:8443');
-    final tokenController = TextEditingController();
-    String? error;
-    showDialog<void>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setState) => AlertDialog(
-          backgroundColor: AxColors.s2,
-          title: Text('Pair backend', style: AxTextStyles.sans.copyWith(fontSize: 15, fontWeight: FontWeight.w700)),
-          content: SizedBox(
-            width: 380,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Host : port', style: AxTextStyles.sans.copyWith(fontSize: 11, color: AxColors.fg3)),
-                const SizedBox(height: 4),
-                TextField(
-                  controller: hostController,
-                  style: AxTextStyles.mono.copyWith(fontSize: 12.5),
-                  decoration: InputDecoration(
-                    filled: true,
-                    fillColor: AxColors.s1,
-                    hintText: '10.8.0.1:8443',
-                    hintStyle: AxTextStyles.mono.copyWith(fontSize: 12, color: AxColors.fg3),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
-                    isDense: true,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Text('Auth token', style: AxTextStyles.sans.copyWith(fontSize: 11, color: AxColors.fg3)),
-                const SizedBox(height: 4),
-                TextField(
-                  controller: tokenController,
-                  obscureText: true,
-                  style: AxTextStyles.mono.copyWith(fontSize: 12.5),
-                  decoration: InputDecoration(
-                    filled: true,
-                    fillColor: AxColors.s1,
-                    hintText: 'from: archangeld gen-token',
-                    hintStyle: AxTextStyles.mono.copyWith(fontSize: 12, color: AxColors.fg3),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
-                    isDense: true,
-                  ),
-                ),
-                if (error != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: Text(error!, style: AxTextStyles.mono.copyWith(fontSize: 11, color: AxColors.bad)),
-                  ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
-            TextButton(
-              onPressed: () async {
-                try {
-                  await backend.pair(host: hostController.text, token: tokenController.text);
-                  if (context.mounted) Navigator.of(context).pop();
-                  onPaired();
-                } on FormatException catch (e) {
-                  setState(() => error = e.message);
-                } catch (e) {
-                  setState(() => error = e.toString());
-                }
-              },
-              child: const Text('Pair'),
-            ),
-          ],
-        ),
-      ),
-    );
+    // ArchangeldConnection.pair() notifies listeners itself, and
+    // TerminalScreen.build watches it - onPaired is just a belt-and-braces
+    // rebuild trigger, the actual pairing happens in the shared dialog.
+    showPairingDialog(context).then((_) => onPaired());
   }
 }
