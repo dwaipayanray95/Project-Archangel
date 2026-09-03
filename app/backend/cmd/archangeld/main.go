@@ -184,11 +184,12 @@ func runPair(args []string) {
 	fs := flag.NewFlagSet("pair", flag.ExitOnError)
 	configPath := fs.String("config", "/etc/archangel/config.yaml", "path to config.yaml")
 	asQR := fs.Bool("qr", false, "also print the bundle as an ASCII QR code (needs qrencode)")
+	rawOutput := fs.Bool("raw", false, "print only the bare bundle string, no preamble/trailer text - for scripts/automation (e.g. the in-app setup wizard) parsing stdout")
 	_ = fs.Parse(args)
 
 	rest := fs.Args()
 	if len(rest) != 1 || rest[0] == "" {
-		fmt.Fprintln(os.Stderr, "usage: archangeld pair <device-name> [--qr]")
+		fmt.Fprintln(os.Stderr, "usage: archangeld pair <device-name> [--qr] [--raw]")
 		os.Exit(1)
 	}
 	name := rest[0]
@@ -264,10 +265,14 @@ func runPair(args []string) {
 	}
 	encoded := base64.StdEncoding.EncodeToString(raw)
 
-	fmt.Printf("Paired %q at %s. Pairing bundle (shown once - the private key and token aren't stored in plaintext anywhere else):\n\n", name, ip)
-	fmt.Println(encoded)
-	fmt.Println()
-	fmt.Println("Paste this into Archangel's pairing screen (Settings, or the Terminal tab if unpaired).")
+	if *rawOutput {
+		fmt.Println(encoded)
+	} else {
+		fmt.Printf("Paired %q at %s. Pairing bundle (shown once - the private key and token aren't stored in plaintext anywhere else):\n\n", name, ip)
+		fmt.Println(encoded)
+		fmt.Println()
+		fmt.Println("Paste this into Archangel's pairing screen (Settings, or the Terminal tab if unpaired).")
+	}
 
 	if *asQR {
 		qr := exec.Command("qrencode", "-t", "ansiutf8")
