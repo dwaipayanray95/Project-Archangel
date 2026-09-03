@@ -13,7 +13,7 @@ rather than a hand-rolled one), and a custom backend on macOS — see below.
 | Android | `VpnService` (`com.wireguard.android:tunnel`), via wireguard_flutter | Should work out of the box — real, maintained implementation, no manual setup beyond the `INTERNET` permission (already added). **Not yet run on a real device from this session.** |
 | Windows | Bundled `WireGuardNT` (`tunnel.dll`/`wireguard.dll`) run as a Windows service, via wireguard_flutter | Should work — the app now requests admin elevation on launch (`windows/runner/runner.exe.manifest`) since creating the service needs it. **Not yet run on real Windows.** |
 | Linux | wireguard_flutter shells out to `wg`/`wg-quick` via `sudo` | Verified end-to-end in this session (see below) — needs `wireguard-tools` installed and either passwordless sudo or an interactive terminal for the sudo prompt. |
-| macOS | **Custom**: a bundled, officially-sourced `wireguard-go` binary driven directly (`macos/Runner/WireGuardMacOS.swift`), not wireguard_flutter's darwin backend | Real implementation, cross-compiled and bundled in this session — **not yet compiled or run**, no macOS toolchain in this sandbox. See below. |
+| macOS | **Custom**: a bundled, officially-sourced `wireguard-go` binary driven directly (`macos/Runner/WireGuardMacOS.swift`), not wireguard_flutter's darwin backend | **Compiled and run on real hardware.** Interface creation + UAPI configuration confirmed working (a utun interface came up with the right address); two real bugs found and fixed (daemonization, a process-tracking leak) — the fix itself hasn't been retested yet. See below. |
 
 ### Why macOS doesn't use wireguard_flutter's own backend
 
@@ -38,21 +38,32 @@ WireGuard's documented cross-platform UAPI socket protocol
 instead of shelling out to the C `wg` CLI (which, being C rather than Go,
 wasn't something this Linux sandbox could cross-compile).
 
-**This Swift code has never been compiled** — there is no macOS toolchain
-available in the environment it was written in. The most likely spots to
-need a fix during the first real build/run:
-- The exact log line `wireguard-go` prints for its assigned interface
-  name (`waitForInterfaceName` parses this with a regex that's a
-  best-effort match against known behavior, not something confirmed
-  against a real run)
-- The elevated-process (`osascript ... with administrator privileges`)
-  plumbing for launching `wireguard-go` in the background and later
-  finding/terminating it
+**First real-hardware run found two bugs, now fixed but not yet retested:**
+1. `wireguard-go` daemonizes (double-forks into the background) by
+   default, which detached it from both the log redirection and the PID
+   our shell's `$!` captured — the log came back completely empty on
+   every attempt, and orphaned root `wireguard-go` processes piled up
+   (11 of them, across ~2 hours of testing) because `disconnect()` had
+   nothing valid to kill. Fixed: `WG_PROCESS_FOREGROUND=1` stops the
+   daemonizing, the interface name is now computed via `ifconfig -l`
+   instead of parsed from a log line, and `disconnect()` kills the real
+   PID (plus an exact-match `pkill` fallback) via the same elevated path.
+2. Confirmed working before the fix: interface creation and UAPI
+   configuration — a utun interface (`utun4`) came up with the exact
+   address the config specified. The core mechanism is sound; the bugs
+   were in process lifecycle management around it, not the WireGuard
+   protocol handling itself.
+
+**Still-open item, not yet touched:**
 - Routing: only the interface's own address is configured
   (`bringUpInterface`) — `AllowedIPs` beyond the tunnel's own address
   aren't routed yet, which is fine for archangeld's typical narrow
   `AllowedIPs` (the server's own tunnel subnet) but not for a full-tunnel
   `0.0.0.0/0` config
+
+**If you're picking this up after a previous failed attempt**, check for
+and clean up leaked root processes first: `ps aux | grep wireguard-go`,
+then `sudo pkill -f wireguard-go` if any turn up.
 
 **Also required, manually, in Xcode** — the bundled binaries need adding
 to the Runner target's **Copy Bundle Resources** build phase (drag the
