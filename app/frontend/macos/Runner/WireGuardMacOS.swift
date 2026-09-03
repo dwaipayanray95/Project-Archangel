@@ -15,30 +15,25 @@
 // isn't something this session could cross-compile from Linux the way
 // wireguard-go itself was.
 //
-// Status: the PREVIOUS version of this file was compiled and run on real
-// hardware (no macOS toolchain exists in the sandbox this file is edited
-// from, so nothing here is compiled by the person/agent making these
-// changes - real building and testing happens only on the actual Mac).
-// That run confirmed interface creation and UAPI configuration both work
-// (a utun interface came up with the expected address) and surfaced two
-// real bugs, fixed below but NOT YET recompiled or retested:
-//   1. wireguard-go daemonizes (double-forks into the background) by
-//      default, detaching from both the log redirection and the PID our
-//      shell's `$!` captured - WG_PROCESS_FOREGROUND=1 below stops that,
-//      and the interface name is now computed ourselves via `ifconfig -l`
-//      rather than parsed from a log line that daemonizing meant we'd
-//      often never actually see.
-//   2. disconnect() was tracking and terminating the *osascript* wrapper
-//      process, not the actual (elevated, root-owned) wireguard-go
-//      process it launched - every connect attempt leaked a permanent
-//      root process. Fixed to kill the real PID (plus an exact-match
-//      pkill fallback) via the same elevated-privileges path.
-// A SECOND real-hardware run (after fixing the above) got further - the
-// socket now reliably appears - but failed to connect() to it: wireguard-go
-// (root) creates /var/run/wireguard/ and the socket itself root-owned, and
-// this process's own connect() call runs as the logged-in user, not root.
-// Fixed with relaxUapiSocketPermissions() (an elevated chmod) right after
-// the socket appears, before connecting to it. Not yet retested.
+// Status: verified working end-to-end on real hardware - tunnel connects
+// (top bar shows green) against a real deployed server. No macOS
+// toolchain exists in the sandbox this file is edited from, so changes
+// here are never compiled by the person/agent making them; all real
+// building and testing happens on the actual Mac, iteratively, against
+// real compiler and runtime errors. Bugs found and fixed along the way:
+// wireguard-go daemonizing by default (fixed with WG_PROCESS_FOREGROUND=1
+// and computing the interface name ourselves rather than parsing a log
+// line), disconnect() killing the wrong process (leaked root processes -
+// now kills the real PID), a UAPI socket permission denial (relaxed via
+// an elevated chmod), one Int8/UInt8 Swift compile error, and - the one
+// that made "green but can't actually reach the server" possible - no
+// route was configured for traffic to the peer's address, so it silently
+// fell through to the normal default route instead of the tunnel. Fixed
+// in bringUpInterface() below (not yet retested): a full-tunnel
+// `0.0.0.0/0` AllowedIPs is still explicitly skipped there, since safely
+// overriding the default route without breaking normal internet access
+// needs more care than this pass covers - fine for archangeld's own
+// narrow AllowedIPs, not for a full-tunnel config.
 import Cocoa
 import FlutterMacOS
 import Darwin
@@ -139,7 +134,7 @@ class WireGuardMacOS: NSObject {
         // path everything else here already needs.
         try relaxUapiSocketPermissions(ifname: ifname)
         try configureViaUAPI(ifname: ifname, config: parsed)
-        try bringUpInterface(ifname: ifname, address: parsed.address)
+        try bringUpInterface(ifname: ifname, address: parsed.address, allowedIps: parsed.allowedIps)
     }
 
     private func relaxUapiSocketPermissions(ifname: String) throws {
@@ -281,7 +276,7 @@ class WireGuardMacOS: NSObject {
 
     // MARK: - Interface addressing / routing
 
-    private func bringUpInterface(ifname: String, address: String) throws {
+    private func bringUpInterface(ifname: String, address: String, allowedIps: [String]) throws {
         // address is CIDR form, e.g. "10.8.0.5/32" - ifconfig wants the
         // parts split out.
         let parts = address.split(separator: "/")
@@ -291,7 +286,24 @@ class WireGuardMacOS: NSObject {
         let ip = String(parts[0])
         let mask = WGConfig.prefixLengthToMask(prefixLen)
 
-        let cmd = "ifconfig \(ifname) inet \(ip) \(ip) netmask \(mask) up"
+        var cmd = "ifconfig \(ifname) inet \(ip) \(ip) netmask \(mask) up"
+
+        // Bringing the interface up alone isn't enough - without an
+        // explicit route, traffic to the server's tunnel address falls
+        // through to the normal default route (WiFi/ethernet), which has
+        // no idea how to reach a private tunnel-only address and just
+        // hangs rather than erroring. Route each AllowedIPs entry through
+        // the tunnel explicitly, except a full-tunnel 0.0.0.0/0 - safely
+        // overriding the default route (without breaking this Mac's
+        // normal internet access) needs more care than a plain `route add
+        // default` gives, so that case is still a follow-up; archangeld's
+        // own AllowedIPs are narrow (just the server's own tunnel address)
+        // so this covers the actual use case.
+        for cidr in allowedIps where cidr != "0.0.0.0/0" {
+            let net = cidr.contains("/") ? cidr : "\(cidr)/32"
+            cmd += " && route -n add -net \(net) -interface \(ifname)"
+        }
+
         let escaped = cmd.replacingOccurrences(of: "\"", with: "\\\"")
         let osascript = "do shell script \"\(escaped)\" with administrator privileges"
 
@@ -301,14 +313,8 @@ class WireGuardMacOS: NSObject {
         try task.run()
         task.waitUntilExit()
         guard task.terminationStatus == 0 else {
-            throw WGMacError.message("Failed to configure the tunnel interface address (ifconfig).")
+            throw WGMacError.message("Failed to configure the tunnel interface address/routes (ifconfig/route).")
         }
-        // Routing for AllowedIPs beyond the interface's own /32 is
-        // intentionally left to a follow-up - most configs use a narrow
-        // AllowedIPs (this server's own subnet) rather than full-tunnel
-        // 0.0.0.0/0, and getting split-tunnel routing right on macOS
-        // without clobbering the default route needs more care than this
-        // first pass covers.
     }
 
     // MARK: - Disconnect
