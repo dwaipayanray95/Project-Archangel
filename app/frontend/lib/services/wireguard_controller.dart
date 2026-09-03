@@ -74,28 +74,35 @@ class WireGuardController extends ChangeNotifier {
     if (_initialized) return;
     _initialized = true;
 
-    await _loadSavedConfig();
+    // _bootstrapped must become true exactly once no matter what happens
+    // above, including an exception type nothing here anticipates -
+    // main.dart's _RootRouter waits on it before showing anything but a
+    // loading spinner, so a bug that skipped this would strand every
+    // user on that spinner forever with no path to the wizard or the app
+    // shell.
+    try {
+      await _loadSavedConfig();
 
-    if (_useMacosChannel) {
-      // No stage stream on this backend yet - status is set directly by
-      // connect()/disconnect() below instead of an event stream.
-      _status = TunnelStatus.disconnected;
+      if (_useMacosChannel) {
+        // No stage stream on this backend yet - status is set directly by
+        // connect()/disconnect() below instead of an event stream.
+        _status = TunnelStatus.disconnected;
+        return;
+      }
+
+      try {
+        await _wg.initialize(interfaceName: _kInterfaceName);
+        _sub = _wg.vpnStageSnapshot.listen(_onStageChanged, onError: (_) {});
+        unawaited(_wg.refreshStage());
+      } catch (e) {
+        // Most commonly hit on Linux without wireguard-tools installed.
+        _status = TunnelStatus.unsupported;
+        _lastError = e.toString();
+      }
+    } finally {
       _bootstrapped = true;
       notifyListeners();
-      return;
     }
-
-    try {
-      await _wg.initialize(interfaceName: _kInterfaceName);
-      _sub = _wg.vpnStageSnapshot.listen(_onStageChanged, onError: (_) {});
-      unawaited(_wg.refreshStage());
-    } catch (e) {
-      // Most commonly hit on Linux without wireguard-tools installed.
-      _status = TunnelStatus.unsupported;
-      _lastError = e.toString();
-    }
-    _bootstrapped = true;
-    notifyListeners();
   }
 
   void _onStageChanged(VpnStage stage) {

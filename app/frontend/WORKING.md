@@ -110,7 +110,7 @@ no Windows toolchain. Everything below is real, complete code, but
    router (`main.dart`'s `_RootRouter`) now shows a landing screen
    choosing between this wizard and the existing manual pairing dialog
    when neither the tunnel nor the backend is paired yet.
-   **Unverified**: the SSH orchestration logic has 7 passing unit tests
+   **Unverified**: the SSH orchestration logic has unit tests
    against a fake SSH transport (idempotency branches, failure paths),
    `flutter analyze`/`flutter build linux` are clean, but it has never
    run against a real VPS - that's the natural next real-hardware
@@ -118,6 +118,31 @@ no Windows toolchain. Everything below is real, complete code, but
    Files/Containers/Monitoring/DevOps screens are still 100% mock data
    (`lib/data/mock_data.dart`) - no backend routes exist for them yet,
    pairing only covers the tunnel + terminal auth.
+
+3c. **Security hardening from `/code-review`** (all fixed, none verified
+   against a real device/server): a real remote-command-injection bug in
+   `VpsSetupService._writeConfigIfAbsent` (a free-text "Advanced" field
+   was spliced into a quoted shell heredoc - a value containing the
+   delimiter on its own line could break out and run arbitrary shell as
+   root on the next connect; fixed by writing `config.yaml` via SFTP
+   instead, same as the setup scripts already were, plus input
+   validation in the wizard UI) - regression-tested in
+   `test/vps_setup_service_test.dart`. SSH host-key verification (was:
+   accept any key silently; now: trust-on-first-use with a confirmation
+   dialog, and a stored-fingerprint mismatch is never auto-accepted -
+   `lib/services/known_hosts.dart`, `lib/services/ssh_transport.dart`'s
+   `resolveHostKeyTrust`, tested in `test/ssh_transport_test.dart`). An
+   OS-level biometric/PIN re-auth gate (`local_auth`,
+   `lib/services/local_auth_service.dart`) before reading back a
+   "remembered" SSH private key on Android/macOS/Windows (no official
+   Linux backend, degrades to no gate there rather than locking anyone
+   out - required changing Android's `MainActivity` from
+   `FlutterActivity` to `FlutterFragmentActivity`, unverified on a real
+   Android device). `WireGuardController.bootstrap()` now sets
+   `isBootstrapped` in a `finally` block so no exception path can strand
+   `_RootRouter` on its loading spinner forever. The wizard's
+   `_enterArchangel()` now catches pairing failures instead of leaving a
+   dead "Enter Archangel" button with no feedback.
 4. **Terminal is not a full terminal emulator** — `TerminalSession`
    renders raw output, no ANSI/VT100 escape sequence handling. Fine for
    plain shell use, will show garbage for `htop`/`vim`/colored output.

@@ -104,7 +104,42 @@ void main() {
 
       await service.run(_config).toList();
 
-      expect(ssh.commands.any((c) => c.contains('tee /etc/archangel/config.yaml')), isFalse);
+      expect(ssh.uploadedPaths.any((p) => p.endsWith('config.yaml')), isFalse);
+      expect(ssh.commands.any((c) => c.contains('mv') && c.contains('/etc/archangel/config.yaml')), isFalse);
+    });
+
+    test('never lets a malicious wgSubnet value execute as a second command', () async {
+      // Regression test for a real bug: config.yaml's content used to be
+      // spliced into a quoted heredoc sent as one shell command. A
+      // wgSubnet value containing a line that read exactly the heredoc's
+      // delimiter would terminate it early and run whatever followed as
+      // a second, arbitrary command - as root, since every command here
+      // runs via sudo. config.yaml is now written via SFTP (uploadFile)
+      // instead, which can't be broken out of this way; the wizard's own
+      // UI also validates wgSubnet before it ever reaches this service,
+      // but this test proves the service itself is safe even if that
+      // validation were bypassed.
+      const marker = 'pwned-marker-file';
+      final maliciousConfig = VpsSetupConfig(
+        deviceName: 'test-device',
+        wgSubnet: "10.10.0\nCONF\ntouch /tmp/$marker\n#",
+      );
+      final ssh = FakeSshTransport(responses: [
+        (RegExp(r'uname -m'), const SshExecResult(exitCode: 0, stdout: 'x86_64', stderr: '')),
+        (RegExp(r'test -f /etc/wireguard/wg0.conf'), const SshExecResult(exitCode: 0, stdout: '', stderr: '')),
+        (RegExp(r'ifconfig.me'), const SshExecResult(exitCode: 0, stdout: '203.0.113.5', stderr: '')),
+        (RegExp(r'test -f /etc/archangel/config.yaml'), const SshExecResult(exitCode: 1, stdout: '', stderr: '')),
+        (RegExp(r'archangeld pair'), SshExecResult(exitCode: 0, stdout: _fakeBundle(), stderr: '')),
+      ]);
+      final service = VpsSetupService(ssh);
+
+      await service.run(maliciousConfig).toList();
+
+      expect(
+        ssh.commands.any((c) => c.contains(marker)),
+        isFalse,
+        reason: 'the malicious wgSubnet value must never be executed as a shell command',
+      );
     });
 
     test('rejects an unsupported server architecture', () async {
