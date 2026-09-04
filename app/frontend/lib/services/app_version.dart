@@ -1,30 +1,14 @@
-import 'package:flutter/services.dart' show rootBundle;
-
-/// Central version helper for Project Archangel frontend.
+/// Central version helper for the Archangel frontend.
 ///
-/// Draws the version dynamically at build/runtime from the project root's
-/// `VERSION` asset, with a compile-time fallback constant.
+/// [current] is kept in sync with the repo root's `VERSION` file's
+/// `FRONTEND` line by `app/frontend/scripts/sync_version.sh` (run by
+/// hand after bumping VERSION, and by CI before every build) - not read
+/// dynamically at runtime, since Flutter's asset bundler doesn't
+/// resolve the symlink approach that was tried here first (confirmed:
+/// `flutter build` hard-fails on a symlinked asset on every platform,
+/// not just Windows).
 class AppVersion {
   AppVersion._();
 
-  static const String fallback = '1.1.0';
-  static String? _cached;
-
-  /// Returns the current app version. Asynchronously reads the root `VERSION`
-  /// asset once, or returns [fallback] immediately.
-  static Future<String> get() async {
-    if (_cached != null) return _cached!;
-    try {
-      final text = await rootBundle.loadString('assets/VERSION');
-      final clean = text.trim();
-      if (clean.isNotEmpty) {
-        _cached = clean;
-        return clean;
-      }
-    } catch (_) {}
-    return fallback;
-  }
-
-  /// Synchronous cached or fallback version string.
-  static String get current => _cached ?? fallback;
+  static const String current = '0.2.1';
 }

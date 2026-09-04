@@ -78,6 +78,8 @@ jobs:
 
       - run: flutter config --enable-macos-desktop
       - run: flutter pub get
+      - name: Sync frontend version from VERSION
+        run: ./scripts/sync_version.sh
       - run: flutter build macos --release
 
       - name: Zip the .app bundle
@@ -127,6 +129,9 @@ jobs:
 
       - run: flutter config --enable-windows-desktop
       - run: flutter pub get
+      - name: Sync frontend version from VERSION
+        shell: bash
+        run: ./scripts/sync_version.sh
       - run: flutter build windows --release
 
       - name: Zip the release folder
@@ -180,6 +185,8 @@ jobs:
           restore-keys: ${{ runner.os }}-gradle-
 
       - run: flutter pub get
+      - name: Sync frontend version from VERSION
+        run: ./scripts/sync_version.sh
 
       # arm64-v8a only, not a universal APK: every device this app targets
       # (anything from the last ~6 years) is arm64, and skipping armeabi-v7a

@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'data/app_state.dart';
 import 'screens/setup/setup_landing_screen.dart';
-import 'services/app_version.dart';
 import 'services/archangeld_connection.dart';
 import 'services/monitoring_service.dart';
 import 'services/wireguard_controller.dart';
@@ -10,9 +9,8 @@ import 'theme/app_theme.dart';
 import 'theme/tokens.dart';
 import 'widgets/app_shell.dart';
 
-void main() async {
+void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  await AppVersion.get();
   runApp(const ArchangelApp());
 }
 
