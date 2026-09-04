@@ -19,6 +19,9 @@ func TestFilesRoutesAuthAndExecution(t *testing.T) {
 	router := api.NewRouter(func(h string) bool { return h == expectedHash })
 
 	tmpDir := t.TempDir()
+	if err := files.SetRoot(tmpDir); err != nil {
+		t.Fatal(err)
+	}
 	fpath := filepath.Join(tmpDir, "server.log")
 	_ = os.WriteFile(fpath, []byte("Started archangeld daemon\nReady for WireGuard peers\n"), 0644)
 

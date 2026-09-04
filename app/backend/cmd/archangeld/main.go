@@ -24,6 +24,7 @@ import (
 	"github.com/dwaipayanray95/project-archangel/backend/internal/api"
 	"github.com/dwaipayanray95/project-archangel/backend/internal/auth"
 	"github.com/dwaipayanray95/project-archangel/backend/internal/config"
+	"github.com/dwaipayanray95/project-archangel/backend/internal/files"
 	"github.com/dwaipayanray95/project-archangel/backend/internal/terminal"
 	"github.com/dwaipayanray95/project-archangel/backend/internal/tokenstore"
 	"github.com/dwaipayanray95/project-archangel/backend/internal/version"
@@ -55,6 +56,14 @@ func main() {
 	if err != nil {
 		slog.Error("failed to load config", "err", err)
 		os.Exit(1)
+	}
+
+	if err := files.SetRoot(cfg.FilesRoot); err != nil {
+		slog.Error("failed to set up file browser root", "err", err)
+		os.Exit(1)
+	}
+	if cfg.FilesRoot == "" {
+		slog.Warn("files_root is not set - the Files tab will reject every request until it is")
 	}
 
 	store, err := tokenstore.Load(cfg.TokenStorePath)
