@@ -16,7 +16,6 @@ class FilesScreen extends StatefulWidget {
 
 class _FilesScreenState extends State<FilesScreen> {
   String _filter = '';
-  static const _quickPaths = ['/', '/home', '/etc', '/var/log', '/srv/docker'];
 
   @override
   void initState() {
@@ -237,23 +236,16 @@ class _FilesScreenState extends State<FilesScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(8, 2, 8, 7),
-                          child: Text(
-                            'QUICK JUMP',
-                            style: AxTextStyles.sans.copyWith(
-                              fontSize: 10,
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: 1.2,
-                              color: AxColors.fg3,
-                            ),
-                          ),
+                        _TreeRow(
+                          label: files.rootPath ?? 'Root',
+                          selected: currentPath.isEmpty,
+                          onTap: () => files.loadDirectory(''),
                         ),
-                        for (final p in _quickPaths)
+                        for (final d in files.quickJumpDirs)
                           _TreeRow(
-                            label: p,
-                            selected: p == currentPath,
-                            onTap: () => files.loadDirectory(p),
+                            label: d.name,
+                            selected: d.path == currentPath,
+                            onTap: () => files.loadDirectory(d.path),
                           ),
                       ],
                     ),
