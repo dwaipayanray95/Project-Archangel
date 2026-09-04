@@ -22,6 +22,12 @@ if [[ -z "$FRONTEND_VERSION" ]]; then
   exit 1
 fi
 
+ARCHANGEL_VERSION=$(awk '/^ARCHANGEL/ {print $2}' "$ROOT_VERSION_FILE")
+if [[ -z "$ARCHANGEL_VERSION" ]]; then
+  echo "ERROR: no ARCHANGEL line found in $ROOT_VERSION_FILE" >&2
+  exit 1
+fi
+
 PUBSPEC="$FRONTEND_DIR/pubspec.yaml"
 # Preserve whatever build-number suffix (+N) is already there.
 BUILD_NUMBER=$(grep -E '^version: ' "$PUBSPEC" | sed -E 's/^version: [0-9.]+\+?//')
@@ -29,7 +35,7 @@ sed -i.bak -E "s/^version: .*/version: ${FRONTEND_VERSION}+${BUILD_NUMBER:-1}/" 
 rm -f "$PUBSPEC.bak"
 
 APP_VERSION_DART="$FRONTEND_DIR/lib/services/app_version.dart"
-sed -i.bak -E "s/static const String current = '[0-9.]+';/static const String current = '${FRONTEND_VERSION}';/" "$APP_VERSION_DART"
+sed -i.bak -E "s/static const String archangel = '[0-9.]+';/static const String archangel = '${ARCHANGEL_VERSION}';/" "$APP_VERSION_DART"
 rm -f "$APP_VERSION_DART.bak"
 
-echo "Synced frontend version to $FRONTEND_VERSION (pubspec.yaml, app_version.dart)"
+echo "Synced frontend version to $FRONTEND_VERSION, project version to $ARCHANGEL_VERSION (pubspec.yaml, app_version.dart)"

@@ -1,58 +1,62 @@
-name: Build Archangel
+name: Release Archangel
 
-# Manual, pick-and-choose build. Every target defaults to off so a run only
-# builds what you actually ask for; "all" is a shortcut that overrides the
-# individual checkboxes rather than a fifth separate target to keep in sync.
+# Single tag-triggered release pipeline for both the backend and the
+# frontend. Tag = the ARCHANGEL (project) version from the root VERSION
+# file. There is no manual dispatch and no diff-based auto-detection -
+# the tag's suffix alone decides what gets built:
+#
+#   v1.2.3-b   backend only
+#   v1.2.3-f   frontend only (macOS + Windows + Android)
+#   v1.2.3     both
+#
+# Every run publishes its artifacts to that tag's GitHub Release.
+#
+# Cut a release with:
+#   git tag v1.2.3 && git push origin v1.2.3
+
 on:
-  workflow_dispatch:
-    inputs:
-      macos:
-        description: "macOS app (Archangel.app)"
-        type: boolean
-        default: false
-      windows:
-        description: "Windows app (.exe + runtime)"
-        type: boolean
-        default: false
-      android:
-        description: "Android app (.apk)"
-        type: boolean
-        default: false
-      backend:
-        description: "Backend binaries (archangeld, amd64 + arm64)"
-        type: boolean
-        default: false
-      all:
-        description: "Build everything above, regardless of the other checkboxes"
-        type: boolean
-        default: false
+  push:
+    tags:
+      - "v*"
 
 env:
   FLUTTER_VERSION: "3.29.3"
   GO_VERSION: "1.24"
 
+permissions:
+  contents: write
+
 jobs:
-  # Resolves "all" into per-target flags once so every build job below has a
-  # single simple `if:` condition instead of repeating the OR everywhere.
+  # Resolves the tag suffix into per-target flags once so every build job
+  # below has a single simple `if:` condition instead of repeating the
+  # suffix check everywhere.
   plan:
     runs-on: ubuntu-latest
     outputs:
-      macos: ${{ steps.resolve.outputs.macos }}
-      windows: ${{ steps.resolve.outputs.windows }}
-      android: ${{ steps.resolve.outputs.android }}
       backend: ${{ steps.resolve.outputs.backend }}
+      frontend: ${{ steps.resolve.outputs.frontend }}
     steps:
       - id: resolve
         run: |
-          all="${{ inputs.all }}"
-          echo "macos=$([ "$all" = "true" ] && echo true || echo "${{ inputs.macos }}")" >> "$GITHUB_OUTPUT"
-          echo "windows=$([ "$all" = "true" ] && echo true || echo "${{ inputs.windows }}")" >> "$GITHUB_OUTPUT"
-          echo "android=$([ "$all" = "true" ] && echo true || echo "${{ inputs.android }}")" >> "$GITHUB_OUTPUT"
-          echo "backend=$([ "$all" = "true" ] && echo true || echo "${{ inputs.backend }}")" >> "$GITHUB_OUTPUT"
+          tag="${{ github.ref_name }}"
+          case "$tag" in
+            *-b)
+              echo "backend=true" >> "$GITHUB_OUTPUT"
+              echo "frontend=false" >> "$GITHUB_OUTPUT"
+              ;;
+            *-f)
+              echo "backend=false" >> "$GITHUB_OUTPUT"
+              echo "frontend=true" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "backend=true" >> "$GITHUB_OUTPUT"
+              echo "frontend=true" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
 
   build-macos:
     needs: plan
-    if: needs.plan.outputs.macos == 'true'
+    if: needs.plan.outputs.frontend == 'true'
     runs-on: macos-latest
     defaults:
       run:
@@ -76,6 +80,15 @@ jobs:
           key: ${{ runner.os }}-pub-${{ hashFiles('app/frontend/pubspec.lock') }}
           restore-keys: ${{ runner.os }}-pub-
 
+      # CocoaPods cache: the project gained a Podfile this session
+      # (mobile_scanner) and pod installs weren't cached anywhere before -
+      # keyed on Podfile.lock so a dependency bump still invalidates it.
+      - uses: actions/cache@v4
+        with:
+          path: app/frontend/macos/Pods
+          key: ${{ runner.os }}-pods-${{ hashFiles('app/frontend/macos/Podfile.lock') }}
+          restore-keys: ${{ runner.os }}-pods-
+
       - run: flutter config --enable-macos-desktop
       - run: flutter pub get
       - name: Sync frontend version from VERSION
@@ -86,15 +99,14 @@ jobs:
         working-directory: app/frontend/build/macos/Build/Products/Release
         run: ditto -c -k --sequesterRsrc --keepParent Archangel.app Archangel-macos.zip
 
-      - uses: actions/upload-artifact@v4
+      - uses: softprops/action-gh-release@v2
         with:
-          name: archangel-macos
-          path: app/frontend/build/macos/Build/Products/Release/Archangel-macos.zip
-          retention-days: 30
+          files: app/frontend/build/macos/Build/Products/Release/Archangel-macos.zip
+          generate_release_notes: true
 
   build-windows:
     needs: plan
-    if: needs.plan.outputs.windows == 'true'
+    if: needs.plan.outputs.frontend == 'true'
     # Pinned rather than windows-latest: newer runner images have shipped
     # with a Visual Studio setup that confuses CMake's generator
     # auto-detection ("could not find any instance of Visual Studio" while
@@ -138,15 +150,14 @@ jobs:
         working-directory: app/frontend/build/windows/x64/runner/Release
         run: Compress-Archive -Path * -DestinationPath ../../../../Archangel-windows.zip
 
-      - uses: actions/upload-artifact@v4
+      - uses: softprops/action-gh-release@v2
         with:
-          name: archangel-windows
-          path: app/frontend/build/Archangel-windows.zip
-          retention-days: 30
+          files: app/frontend/build/Archangel-windows.zip
+          generate_release_notes: true
 
   build-android:
     needs: plan
-    if: needs.plan.outputs.android == 'true'
+    if: needs.plan.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -194,11 +205,10 @@ jobs:
       # build, smaller APK.
       - run: flutter build apk --release --split-per-abi --target-platform android-arm64
 
-      - uses: actions/upload-artifact@v4
+      - uses: softprops/action-gh-release@v2
         with:
-          name: archangel-android-arm64
-          path: app/frontend/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
-          retention-days: 30
+          files: app/frontend/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+          generate_release_notes: true
 
   build-backend:
     needs: plan
@@ -221,10 +231,9 @@ jobs:
       - run: make build-linux-amd64
       - run: make build-linux-arm64
 
-      - uses: actions/upload-artifact@v4
+      - uses: softprops/action-gh-release@v2
         with:
-          name: archangeld-binaries
-          path: |
+          files: |
             app/backend/bin/archangeld-amd64
             app/backend/bin/archangeld-arm64
-          retention-days: 30
+          generate_release_notes: true

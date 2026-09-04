@@ -1,5 +1,8 @@
+import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:http/http.dart' as http;
 
 const _kHostKey = 'archangeld_host';
 const _kTokenKey = 'archangeld_token';
@@ -21,6 +24,13 @@ class ArchangeldConnection extends ChangeNotifier {
 
   bool get isPaired => _host != null && _token != null;
 
+  /// The backend's reported version (from /api/v1/health), refreshed by
+  /// [refreshBackendVersion]. Null until that succeeds at least once -
+  /// this is a purely informational field for the Settings screen, so a
+  /// fetch failure just leaves it null rather than surfacing an error.
+  String? _backendVersion;
+  String? get backendVersion => _backendVersion;
+
   bool _loaded = false;
 
   /// True once [load] has finished reading storage - see
@@ -33,6 +43,9 @@ class ArchangeldConnection extends ChangeNotifier {
     _token = await _secureStorage.read(key: _kTokenKey);
     _loaded = true;
     notifyListeners();
+    if (isPaired) {
+      unawaited(refreshBackendVersion());
+    }
   }
 
   Future<void> pair({required String host, required String token}) async {
@@ -46,6 +59,7 @@ class ArchangeldConnection extends ChangeNotifier {
     _host = cleanHost;
     _token = cleanToken;
     notifyListeners();
+    unawaited(refreshBackendVersion());
   }
 
   Future<void> unpair() async {
@@ -53,7 +67,36 @@ class ArchangeldConnection extends ChangeNotifier {
     await _secureStorage.delete(key: _kTokenKey);
     _host = null;
     _token = null;
+    _backendVersion = null;
     notifyListeners();
+  }
+
+  /// `http://<host>/api/v1/health` - unauthenticated, so this is usable
+  /// without a token; the health endpoint itself needs none.
+  Uri healthHttpUri() {
+    if (!isPaired) {
+      throw StateError('Not paired with a backend');
+    }
+    return Uri.parse('http://$_host/api/v1/health');
+  }
+
+  /// Fetches the backend's version from /api/v1/health and caches it.
+  /// Failures are silent - this only feeds an informational Settings row.
+  Future<void> refreshBackendVersion() async {
+    if (!isPaired) return;
+    try {
+      final res = await http.get(healthHttpUri());
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body) as Map<String, dynamic>;
+        final v = data['version'] as String?;
+        if (v != null && v.isNotEmpty) {
+          _backendVersion = v;
+          notifyListeners();
+        }
+      }
+    } catch (_) {
+      // informational only - leave _backendVersion as-is
+    }
   }
 
   /// `ws://<host>/ws/terminal?token=...` - plain ws, not wss: archangeld
