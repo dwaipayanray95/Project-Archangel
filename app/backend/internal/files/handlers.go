@@ -19,7 +19,10 @@ func ListHandler(w http.ResponseWriter, r *http.Request) {
 
 	targetPath := r.URL.Query().Get("path")
 	if targetPath == "" {
-		targetPath = "/"
+		// An empty path means "show me wherever I'm allowed to start" -
+		// that's the configured files_root, not "/" (which is almost
+		// never inside root and would just trip the jail on first load).
+		targetPath = Root()
 	}
 
 	listing, err := ListDirectory(targetPath)

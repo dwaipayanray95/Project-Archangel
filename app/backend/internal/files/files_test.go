@@ -210,6 +210,37 @@ func TestJailRejectsEscapes(t *testing.T) {
 	}
 }
 
+// TestListHandlerDefaultsEmptyPathToRoot is the regression test for a
+// real bug found on real hardware: the app's first-ever load requests
+// path="" (its landing state before the user has navigated anywhere),
+// and ListHandler used to default that to "/" - which almost never
+// falls inside files_root, so the very first screen a user saw after
+// configuring files_root was a 403.
+func TestListHandlerDefaultsEmptyPathToRoot(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := SetRoot(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "welcome.txt"), []byte("hi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest("GET", "/api/v1/files/list", nil) // no ?path= at all
+	rec := httptest.NewRecorder()
+	ListHandler(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for an empty path, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var listing DirectoryListing
+	if err := json.Unmarshal(rec.Body.Bytes(), &listing); err != nil {
+		t.Fatal(err)
+	}
+	if listing.TotalEntries != 1 || listing.Entries[0].Name != "welcome.txt" {
+		t.Errorf("expected the empty path to land on files_root itself, got %+v", listing)
+	}
+}
+
 // TestEmptyRootRejectsEverything is the fail-closed check: an
 // unconfigured files_root must disable the browser entirely, not
 // default to allowing everything (which is exactly the bug this jail

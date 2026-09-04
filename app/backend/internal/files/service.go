@@ -46,6 +46,11 @@ func SetRoot(r string) error {
 	return nil
 }
 
+// Root returns the currently configured jail root ("" if unconfigured).
+func Root() string {
+	return root
+}
+
 // CleanPath resolves and sanitizes a path into an absolute, `.`/`..`-free
 // form. Purely cosmetic normalization - NOT a security boundary on its
 // own (it happily returns paths outside any root). Use resolvePath for
