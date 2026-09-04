@@ -6,7 +6,11 @@ import '../models/file_entry.dart';
 import 'archangeld_connection.dart';
 
 class FilesService extends ChangeNotifier {
-  String _currentPath = '/var/log';
+  // Empty means "wherever the server's configured files_root is" - the
+  // backend maps an empty path query param to that root itself (see
+  // ListHandler). A hardcoded path like '/var/log' would 403 on first
+  // load for anyone whose files_root doesn't happen to contain it.
+  String _currentPath = '';
   String get currentPath => _currentPath;
 
   bool _showHidden = false;
