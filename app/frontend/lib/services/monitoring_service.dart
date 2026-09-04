@@ -8,6 +8,13 @@ import 'archangeld_connection.dart';
 
 enum MonitoringStatus { disconnected, connecting, connected, error }
 
+class ProcessActionResult {
+  final bool success;
+  final String message;
+
+  const ProcessActionResult({required this.success, required this.message});
+}
+
 /// Service responsible for real-time and snapshot metrics, plus process listings.
 class MonitoringService extends ChangeNotifier {
   MonitoringStatus _status = MonitoringStatus.disconnected;
@@ -122,11 +129,15 @@ class MonitoringService extends ChangeNotifier {
   }
 
   Future<void> fetchSnapshot() async {
-    if (_backend == null || !_backend!.isPaired) return;
+    final backend = _backend;
+    if (backend == null || !backend.isPaired) return;
+    final token = backend.token;
+    if (token == null || token.isEmpty) return;
+
     try {
       final res = await http.get(
-        _backend!.metricsHttpUri(),
-        headers: {'X-Archangel-Token': _backend!.token!},
+        backend.metricsHttpUri(),
+        headers: {'X-Archangel-Token': token},
       );
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body) as Map<String, dynamic>;
@@ -135,16 +146,24 @@ class MonitoringService extends ChangeNotifier {
           _status = MonitoringStatus.connected;
         }
         notifyListeners();
+      } else {
+        debugPrint('fetchSnapshot failed: HTTP ${res.statusCode}');
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('fetchSnapshot error: $e');
+    }
   }
 
   Future<void> fetchProcesses() async {
-    if (_backend == null || !_backend!.isPaired) return;
+    final backend = _backend;
+    if (backend == null || !backend.isPaired) return;
+    final token = backend.token;
+    if (token == null || token.isEmpty) return;
+
     try {
       final res = await http.get(
-        _backend!.processesHttpUri(),
-        headers: {'X-Archangel-Token': _backend!.token!},
+        backend.processesHttpUri(),
+        headers: {'X-Archangel-Token': token},
       );
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body) as Map<String, dynamic>;
@@ -155,46 +174,78 @@ class MonitoringService extends ChangeNotifier {
         _processes = list;
         _totalProcesses = (data['total_count'] as num?)?.toInt() ?? list.length;
         notifyListeners();
+      } else {
+        debugPrint('fetchProcesses failed: HTTP ${res.statusCode}');
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('fetchProcesses error: $e');
+    }
   }
 
-  Future<bool> killProcess(int pid, {bool force = false}) async {
-    if (_backend == null || !_backend!.isPaired) return false;
+  Future<ProcessActionResult> killProcess(int pid, {bool force = false}) async {
+    final backend = _backend;
+    if (backend == null || !backend.isPaired) {
+      return const ProcessActionResult(success: false, message: 'Backend is not paired');
+    }
+    final token = backend.token;
+    if (token == null || token.isEmpty) {
+      return const ProcessActionResult(success: false, message: 'Missing authentication token');
+    }
+
     try {
       final res = await http.post(
-        _backend!.processKillHttpUri(pid),
+        backend.processKillHttpUri(pid),
         headers: {
-          'X-Archangel-Token': _backend!.token!,
+          'X-Archangel-Token': token,
           'Content-Type': 'application/json',
         },
         body: jsonEncode({'force': force}),
       );
       if (res.statusCode == 200) {
         await fetchProcesses();
-        return true;
+        return const ProcessActionResult(success: true, message: 'Process terminated');
+      } else if (res.statusCode == 401 || res.statusCode == 403) {
+        return const ProcessActionResult(success: false, message: 'Unauthorized (invalid or expired token)');
+      } else {
+        final errText = res.body.isNotEmpty ? res.body.trim() : 'HTTP ${res.statusCode}';
+        return ProcessActionResult(success: false, message: 'Server error: $errText');
       }
-    } catch (_) {}
-    return false;
+    } catch (e) {
+      return ProcessActionResult(success: false, message: 'Connection failed: $e');
+    }
   }
 
-  Future<bool> reniceProcess(int pid, int priority) async {
-    if (_backend == null || !_backend!.isPaired) return false;
+  Future<ProcessActionResult> reniceProcess(int pid, int priority) async {
+    final backend = _backend;
+    if (backend == null || !backend.isPaired) {
+      return const ProcessActionResult(success: false, message: 'Backend is not paired');
+    }
+    final token = backend.token;
+    if (token == null || token.isEmpty) {
+      return const ProcessActionResult(success: false, message: 'Missing authentication token');
+    }
+
     try {
       final res = await http.post(
-        _backend!.processReniceHttpUri(pid),
+        backend.processReniceHttpUri(pid),
         headers: {
-          'X-Archangel-Token': _backend!.token!,
+          'X-Archangel-Token': token,
           'Content-Type': 'application/json',
         },
         body: jsonEncode({'priority': priority}),
       );
       if (res.statusCode == 200) {
         await fetchProcesses();
-        return true;
+        return ProcessActionResult(success: true, message: 'Priority updated to $priority');
+      } else if (res.statusCode == 401 || res.statusCode == 403) {
+        return const ProcessActionResult(success: false, message: 'Unauthorized (invalid or expired token)');
+      } else {
+        final errText = res.body.isNotEmpty ? res.body.trim() : 'HTTP ${res.statusCode}';
+        return ProcessActionResult(success: false, message: 'Server error: $errText');
       }
-    } catch (_) {}
-    return false;
+    } catch (e) {
+      return ProcessActionResult(success: false, message: 'Connection failed: $e');
+    }
   }
 
   @override

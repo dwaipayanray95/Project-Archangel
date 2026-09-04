@@ -10,7 +10,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
+	"time"
 )
 
 type ProcessInfo struct {
@@ -28,19 +30,29 @@ type ProcessListResponse struct {
 }
 
 // uidCache avoids resolving username via cgo/syscall repeatedly
-var uidCache = make(map[string]string)
+var (
+	uidCacheMu sync.RWMutex
+	uidCache   = make(map[string]string)
+)
 
 func usernameFromUID(uidStr string) string {
-	if name, ok := uidCache[uidStr]; ok {
+	uidCacheMu.RLock()
+	name, ok := uidCache[uidStr]
+	uidCacheMu.RUnlock()
+	if ok {
 		return name
 	}
+
+	resolved := uidStr
 	u, err := user.LookupId(uidStr)
 	if err == nil && u.Username != "" {
-		uidCache[uidStr] = u.Username
-		return u.Username
+		resolved = u.Username
 	}
-	uidCache[uidStr] = uidStr
-	return uidStr
+
+	uidCacheMu.Lock()
+	uidCache[uidStr] = resolved
+	uidCacheMu.Unlock()
+	return resolved
 }
 
 func ListProcesses() (ProcessListResponse, error) {
@@ -93,6 +105,21 @@ func listLinuxProcesses() (ProcessListResponse, error) {
 		}
 	}
 
+	// Prune dead processes from procCPUSamples map
+	procCPUMu.Lock()
+	if len(procCPUSamples) > len(procs)*2 {
+		activePIDs := make(map[int]struct{}, len(procs))
+		for _, p := range procs {
+			activePIDs[p.PID] = struct{}{}
+		}
+		for pid := range procCPUSamples {
+			if _, active := activePIDs[pid]; !active {
+				delete(procCPUSamples, pid)
+			}
+		}
+	}
+	procCPUMu.Unlock()
+
 	total := len(procs)
 
 	// Sort descending by CPU then Mem
@@ -112,6 +139,17 @@ func listLinuxProcesses() (ProcessListResponse, error) {
 		Processes:  procs,
 	}, nil
 }
+
+// procCPU tracks previous CPU jiffies and timestamp for a PID
+type procCPUSample struct {
+	totalJiffies uint64
+	sampleTime   time.Time
+}
+
+var (
+	procCPUMu      sync.Mutex
+	procCPUSamples = make(map[int]procCPUSample)
+)
 
 func readProc(pid int, totalMemKb uint64) *ProcessInfo {
 	procDir := filepath.Join("/proc", strconv.Itoa(pid))
@@ -144,7 +182,7 @@ func readProc(pid int, totalMemKb uint64) *ProcessInfo {
 		name = fmt.Sprintf("proc-%d", pid)
 	}
 
-	// Read /proc/[pid]/stat for state and memory rss
+	// Read /proc/[pid]/stat for state, CPU jiffies, and memory rss
 	statBytes, err := os.ReadFile(filepath.Join(procDir, "stat"))
 	if err != nil {
 		return nil
@@ -160,6 +198,43 @@ func readProc(pid int, totalMemKb uint64) *ProcessInfo {
 	}
 
 	state := fields[0] // e.g. R, S, Z
+
+	// fields[11] is utime (14th field in stat, 1-indexed)
+	// fields[12] is stime (15th field in stat, 1-indexed)
+	utime, _ := strconv.ParseUint(fields[11], 10, 64)
+	stime, _ := strconv.ParseUint(fields[12], 10, 64)
+	totalJiffies := utime + stime
+
+	now := time.Now()
+	var cpuPct float64
+
+	procCPUMu.Lock()
+	prev, hasPrev := procCPUSamples[pid]
+	procCPUSamples[pid] = procCPUSample{
+		totalJiffies: totalJiffies,
+		sampleTime:   now,
+	}
+	procCPUMu.Unlock()
+
+	if hasPrev && totalJiffies >= prev.totalJiffies {
+		dt := now.Sub(prev.sampleTime).Seconds()
+		if dt > 0.05 { // Ensure minimum sample interval
+			dJiffies := float64(totalJiffies - prev.totalJiffies)
+			// Standard Linux HZ is 100 on most kernels (sysconf(_SC_CLK_TCK))
+			// cpuSeconds = dJiffies / 100.0
+			// cpuPct = (cpuSeconds / dt) / numCPU * 100.0
+			numCPU := float64(runtime.NumCPU())
+			if numCPU < 1 {
+				numCPU = 1
+			}
+			rawPct := ((dJiffies / 100.0) / dt) * 100.0
+			cpuPct = float64(int((rawPct/numCPU)*10)) / 10.0
+			if cpuPct > 100.0 {
+				cpuPct = 100.0
+			}
+		}
+	}
+
 	rssPages, _ := strconv.ParseUint(fields[21], 10, 64)
 	pageSizeKb := uint64(os.Getpagesize() / 1024)
 	rssKb := rssPages * pageSizeKb
@@ -170,7 +245,7 @@ func readProc(pid int, totalMemKb uint64) *ProcessInfo {
 		PID:        pid,
 		Name:       name,
 		User:       userName,
-		CPUPercent: 0.1, // Approximate instantaneous or sample
+		CPUPercent: cpuPct,
 		MemPercent: float64(int(memPct*10)) / 10.0,
 		State:      state,
 	}

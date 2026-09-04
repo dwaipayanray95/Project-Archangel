@@ -553,12 +553,12 @@ class _ProcessTable extends StatelessWidget {
             style: ElevatedButton.styleFrom(backgroundColor: AxColors.bad),
             onPressed: () async {
               Navigator.pop(ctx);
-              final ok = await context.read<MonitoringService>().killProcess(proc.pid);
+              final res = await context.read<MonitoringService>().killProcess(proc.pid);
               if (context.mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
-                    content: Text(ok ? 'Process ${proc.pid} killed' : 'Failed to kill process ${proc.pid}'),
-                    backgroundColor: ok ? AxColors.s2 : AxColors.bad,
+                    content: Text(res.message),
+                    backgroundColor: res.success ? AxColors.s2 : AxColors.bad,
                   ),
                 );
               }
@@ -618,12 +618,12 @@ class _ProcessTable extends StatelessWidget {
               style: ElevatedButton.styleFrom(backgroundColor: AxColors.accent),
               onPressed: () async {
                 Navigator.pop(ctx);
-                final ok = await context.read<MonitoringService>().reniceProcess(proc.pid, selectedPrio);
+                final res = await context.read<MonitoringService>().reniceProcess(proc.pid, selectedPrio);
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text(ok ? 'Process ${proc.pid} reniced to $selectedPrio' : 'Failed to renice process ${proc.pid}'),
-                      backgroundColor: ok ? AxColors.s2 : AxColors.bad,
+                      content: Text(res.message),
+                      backgroundColor: res.success ? AxColors.s2 : AxColors.bad,
                     ),
                   );
                 }
