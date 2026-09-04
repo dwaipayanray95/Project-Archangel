@@ -10,11 +10,7 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool {
-		return true // WireGuard tunnel origin check
-	},
-}
+var upgrader = websocket.Upgrader{}
 
 // MetricsHandler handles GET /api/v1/system/metrics
 func MetricsHandler(w http.ResponseWriter, r *http.Request) {
