@@ -1,29 +1,47 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../data/app_state.dart';
 import '../services/app_version.dart';
 import '../services/archangeld_connection.dart';
 import '../services/tunnel_config.dart';
+import '../services/update_check_service.dart';
 import '../services/wireguard_controller.dart';
 import '../theme/tokens.dart';
 import '../widgets/ax_widgets.dart';
 import '../widgets/pairing_dialog.dart';
 
-class SettingsScreen extends StatelessWidget {
+class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
+
+  @override
+  State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends State<SettingsScreen> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      context.read<UpdateCheckService>().checkForUpdates();
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     final app = context.watch<AppState>();
     final backend = context.watch<ArchangeldConnection>();
+    final updates = context.watch<UpdateCheckService>();
     final ver = AppVersion.current;
     final backendVer = backend.isPaired
         ? (backend.backendVersion != null ? 'v${backend.backendVersion}' : 'checking…')
         : 'not paired';
     final aboutRows = [
-      ['Archangel version', 'v${AppVersion.archangel}'],
-      ['App version', 'v$ver'],
-      ['Backend version', backendVer],
+      ['Archangel version', 'v${AppVersion.archangel}', updates.latestArchangel, AppVersion.archangel],
+      ['App version', 'v$ver', updates.latestFrontend, ver],
+      ['Backend version', backendVer, backend.isPaired ? updates.latestBackend : null, backend.backendVersion],
+    ];
+    final plainRows = [
       ['Host', 'Archangel-MK1'],
       ['Paired devices', '1'],
       ['License', 'personal use'],
@@ -129,9 +147,25 @@ class SettingsScreen extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('About', style: AxTextStyles.sans.copyWith(fontSize: 12.5, fontWeight: FontWeight.w700)),
+                        Row(
+                          children: [
+                            Text('About', style: AxTextStyles.sans.copyWith(fontSize: 12.5, fontWeight: FontWeight.w700)),
+                            const Spacer(),
+                            GestureDetector(
+                              onTap: updates.checking ? null : () => updates.checkForUpdates(force: true),
+                              child: Padding(
+                                padding: const EdgeInsets.all(2),
+                                child: updates.checking
+                                    ? const SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 1.5))
+                                    : Icon(Icons.refresh, size: 14, color: AxColors.fg3),
+                              ),
+                            ),
+                          ],
+                        ),
                         const SizedBox(height: 10),
-                        for (final r in aboutRows) _KvRow(r[0], r[1], divider: false),
+                        for (final r in aboutRows)
+                          _KvRow(r[0]!, r[1]!, divider: false, updateAvailable: (r[2] != null && r[3] != null && r[2] != r[3]) ? r[2] : null),
+                        for (final r in plainRows) _KvRow(r[0], r[1], divider: false),
                       ],
                     ),
                   ),
@@ -157,7 +191,14 @@ class _KvRow extends StatelessWidget {
   final String k;
   final String v;
   final bool divider;
-  const _KvRow(this.k, this.v, {this.divider = true});
+
+  /// The newer version string, if this row's component is behind what
+  /// GitHub's latest release manifest reports - renders a small
+  /// tappable badge linking to the release page. Null when up to date
+  /// or when there's no update info to compare against yet.
+  final String? updateAvailable;
+
+  const _KvRow(this.k, this.v, {this.divider = true, this.updateAvailable});
 
   @override
   Widget build(BuildContext context) {
@@ -166,9 +207,31 @@ class _KvRow extends StatelessWidget {
       decoration: divider ? const BoxDecoration(border: Border(bottom: BorderSide(color: Color(0x0AE8F0E6)))) : null,
       child: Row(
         children: [
-          SizedBox(width: 96, child: Text(k, style: AxTextStyles.sans.copyWith(fontSize: 11, color: AxColors.fg3))),
+          SizedBox(width: 132, child: Text(k, style: AxTextStyles.sans.copyWith(fontSize: 11, color: AxColors.fg3))),
           Expanded(child: Text(v, style: AxTextStyles.mono.copyWith(fontSize: 11.5), overflow: TextOverflow.ellipsis)),
+          if (updateAvailable != null) _UpdateBadge(newerVersion: updateAvailable!),
         ],
+      ),
+    );
+  }
+}
+
+class _UpdateBadge extends StatelessWidget {
+  final String newerVersion;
+  const _UpdateBadge({required this.newerVersion});
+
+  @override
+  Widget build(BuildContext context) {
+    final releaseUrl = context.watch<UpdateCheckService>().releaseUrl;
+    return GestureDetector(
+      onTap: releaseUrl == null
+          ? null
+          : () => launchUrl(Uri.parse(releaseUrl), mode: LaunchMode.externalApplication),
+      child: Container(
+        margin: const EdgeInsets.only(left: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+        decoration: BoxDecoration(color: AxColors.warn.withValues(alpha: 0.16), borderRadius: BorderRadius.circular(AxRadius.pill)),
+        child: Text('v$newerVersion available', style: AxTextStyles.mono.copyWith(fontSize: 9.5, fontWeight: FontWeight.w600, color: AxColors.warn)),
       ),
     );
   }

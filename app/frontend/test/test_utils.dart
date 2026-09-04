@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:archangel/data/app_state.dart';
 import 'package:archangel/services/archangeld_connection.dart';
 import 'package:archangel/services/monitoring_service.dart';
+import 'package:archangel/services/update_check_service.dart';
 import 'package:archangel/services/wireguard_controller.dart';
 import 'package:archangel/theme/app_theme.dart';
 import 'package:archangel/widgets/app_shell.dart';
@@ -28,6 +29,7 @@ Future<AppState> pumpAppShell(WidgetTester tester, {Size size = const Size(1400,
         ChangeNotifierProvider(create: (_) => WireGuardController()),
         ChangeNotifierProvider(create: (_) => ArchangeldConnection()),
         ChangeNotifierProvider(create: (_) => MonitoringService()),
+        ChangeNotifierProvider(create: (_) => UpdateCheckService()),
       ],
       child: Consumer<AppState>(
         builder: (context, app, _) => MaterialApp(
