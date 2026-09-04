@@ -58,7 +58,7 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
                     children: [
                       const StatusDot(color: AxColors.accent, size: 5),
                       const SizedBox(width: 6),
-                      Text('LIVE 2s', style: AxTextStyles.mono.copyWith(fontSize: 10.5, color: AxColors.accent)),
+                      Text('LIVE ${(mon.pollingRateMs / 1000.0).toStringAsFixed(mon.pollingRateMs % 1000 == 0 ? 0 : 1)}s', style: AxTextStyles.mono.copyWith(fontSize: 10.5, color: AxColors.accent)),
                     ],
                   ),
                 ),
@@ -186,43 +186,110 @@ class _ChartCard extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 11),
-        LayoutBuilder(
-          builder: (context, c) {
-            final cols = c.maxWidth >= 700 ? 4 : 2;
-            return GridView.count(
-              crossAxisCount: cols,
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              mainAxisSpacing: 11,
-              crossAxisSpacing: 11,
-              childAspectRatio: 2.6,
-              children: [
-                for (final b in breakdown)
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
-                    decoration: BoxDecoration(color: AxColors.s1, borderRadius: BorderRadius.circular(13), border: Border.all(color: AxColors.line)),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text(b[0] as String, style: AxTextStyles.mono.copyWith(fontSize: 11, color: AxColors.fg2)),
-                            if (b.length > 3 && (b[3] as String).isNotEmpty)
-                              Text(b[3] as String, style: AxTextStyles.mono.copyWith(fontSize: 10, color: AxColors.fg3)),
-                            Text('${((b[1] as double) * 100).round()}%', style: AxTextStyles.mono.copyWith(fontSize: 12, fontWeight: FontWeight.w500)),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        AxMeter(value: (b[1] as double).clamp(0.0, 1.0), color: b[2] as Color),
-                      ],
+        if (tab == _MonTab.memory && metrics?.memory != null)
+          _buildMemoryUnifiedCard(metrics!.memory)
+        else
+          LayoutBuilder(
+            builder: (context, c) {
+              final cols = c.maxWidth >= 700 ? 4 : 2;
+              return GridView.count(
+                crossAxisCount: cols,
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                mainAxisSpacing: 11,
+                crossAxisSpacing: 11,
+                childAspectRatio: 2.6,
+                children: [
+                  for (final b in breakdown)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
+                      decoration: BoxDecoration(color: AxColors.s1, borderRadius: BorderRadius.circular(13), border: Border.all(color: AxColors.line)),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(b[0] as String, style: AxTextStyles.mono.copyWith(fontSize: 11, color: AxColors.fg2)),
+                              if (b.length > 3 && (b[3] as String).isNotEmpty)
+                                Text(b[3] as String, style: AxTextStyles.mono.copyWith(fontSize: 10, color: AxColors.fg3)),
+                              Text('${((b[1] as double) * 100).round()}%', style: AxTextStyles.mono.copyWith(fontSize: 12, fontWeight: FontWeight.w500)),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          AxMeter(value: (b[1] as double).clamp(0.0, 1.0), color: b[2] as Color),
+                        ],
+                      ),
                     ),
-                  ),
-              ],
-            );
-          },
-        ),
+                ],
+              );
+            },
+          ),
+      ],
+    );
+  }
+
+  Widget _buildMemoryUnifiedCard(MemoryMetrics mem) {
+    final total = mem.totalGb > 0 ? mem.totalGb : 1.0;
+    final appRatio = (mem.appUsedGb / total).clamp(0.0, 1.0);
+    final cacheRatio = (mem.cachedGb / total).clamp(0.0, 1.0);
+    final freeRatio = (mem.freeGb / total).clamp(0.0, 1.0);
+    final swapTotal = mem.swapTotalGb > 0 ? mem.swapTotalGb : 1.0;
+    final swapRatio = (mem.swapUsedGb / swapTotal).clamp(0.0, 1.0);
+
+    return Container(
+      padding: const EdgeInsets.all(15),
+      decoration: BoxDecoration(
+        color: AxColors.s1,
+        borderRadius: BorderRadius.circular(13),
+        border: Border.all(color: AxColors.line),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('PHYSICAL RAM DISTRIBUTION', style: AxTextStyles.label),
+              Text('${mem.totalGb.toStringAsFixed(1)} GB TOTAL', style: AxTextStyles.mono.copyWith(fontSize: 11, color: AxColors.fg3)),
+            ],
+          ),
+          const SizedBox(height: 12),
+          AxSegmentMeter(
+            height: 10,
+            segments: [
+              (appRatio, AxColors.accent),
+              (cacheRatio, AxColors.info),
+              (freeRatio, AxColors.fg3.withValues(alpha: 0.35)),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 20,
+            runSpacing: 10,
+            children: [
+              _buildMemLegend('Apps & System', '${mem.appUsedGb.toStringAsFixed(1)} GB (${(appRatio * 100).round()}%)', AxColors.accent),
+              _buildMemLegend('Cache & Buffers', '${mem.cachedGb.toStringAsFixed(1)} GB (${(cacheRatio * 100).round()}%)', AxColors.info),
+              _buildMemLegend('Free Memory', '${mem.freeGb.toStringAsFixed(1)} GB (${(freeRatio * 100).round()}%)', AxColors.fg3.withValues(alpha: 0.7)),
+              if (mem.swapTotalGb > 0)
+                _buildMemLegend('Swap Used', '${mem.swapUsedGb.toStringAsFixed(1)} / ${mem.swapTotalGb.toStringAsFixed(1)} GB (${(swapRatio * 100).round()}%)', AxColors.warn),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMemLegend(String title, String value, Color color) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(width: 8, height: 8, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
+        const SizedBox(width: 6),
+        Text(title, style: AxTextStyles.mono.copyWith(fontSize: 11, color: AxColors.fg2)),
+        const SizedBox(width: 5),
+        Text(value, style: AxTextStyles.mono.copyWith(fontSize: 11, fontWeight: FontWeight.w600, color: AxColors.fg)),
       ],
     );
   }
@@ -271,10 +338,12 @@ class _ChartCard extends StatelessWidget {
       return (
         'Memory usage', '9.6', 'GB',
         const [.4, .45, .5, .48, .55, .58, .6, .61],
-        const [['MIN', '38%'], ['AVG', '52%'], ['MAX', '61%']],
+        const [['TOTAL', '16.0 GB'], ['AVAIL', '6.0 GB'], ['SWAP', '0.5 / 4.0 GB']],
         const [
-          ['used', 0.61, AxColors.accent, '9.6 GB'],
-          ['available', 0.39, AxColors.info, '6.0 GB'],
+          ['Apps & System', 0.38, AxColors.accent, '6.0 GB'],
+          ['Cache & Buffers', 0.22, AxColors.info, '3.6 GB'],
+          ['Free', 0.40, AxColors.fg3, '6.4 GB'],
+          ['Swap Used', 0.12, AxColors.warn, '0.5 GB / 4.0 GB'],
         ],
       );
     }
@@ -283,13 +352,18 @@ class _ChartCard extends StatelessWidget {
         ? [mem.usagePercent / 100.0]
         : mem.history.map((v) => (v / 100.0).clamp(0.0, 1.0)).toList();
 
-    final minVal = (mem.history.isEmpty ? mem.usagePercent : mem.history.reduce((a, b) => a < b ? a : b)).round();
-    final maxVal = (mem.history.isEmpty ? mem.usagePercent : mem.history.reduce((a, b) => a > b ? a : b)).round();
-    final avgVal = mem.history.isEmpty ? mem.usagePercent.round() : (mem.history.reduce((a, b) => a + b) / mem.history.length).round();
+    final total = mem.totalGb > 0 ? mem.totalGb : 1.0;
+    final appRatio = (mem.appUsedGb / total).clamp(0.0, 1.0);
+    final cacheRatio = (mem.cachedGb / total).clamp(0.0, 1.0);
+    final freeRatio = (mem.freeGb / total).clamp(0.0, 1.0);
+    final swapTotal = mem.swapTotalGb > 0 ? mem.swapTotalGb : 1.0;
+    final swapRatio = (mem.swapUsedGb / swapTotal).clamp(0.0, 1.0);
 
     final breakdown = [
-      ['used', (mem.usagePercent / 100.0).clamp(0.0, 1.0), AxColors.accent, '${mem.usedGb.toStringAsFixed(1)} GB'],
-      ['available', (1.0 - mem.usagePercent / 100.0).clamp(0.0, 1.0), AxColors.info, '${mem.availableGb.toStringAsFixed(1)} GB'],
+      ['Apps & System', appRatio, AxColors.accent, '${mem.appUsedGb.toStringAsFixed(1)} GB'],
+      ['Cache & Buffers', cacheRatio, AxColors.info, '${mem.cachedGb.toStringAsFixed(1)} GB'],
+      ['Free', freeRatio, AxColors.fg3, '${mem.freeGb.toStringAsFixed(1)} GB'],
+      ['Swap', swapRatio, AxColors.warn, '${mem.swapUsedGb.toStringAsFixed(1)} / ${mem.swapTotalGb.toStringAsFixed(1)} GB'],
     ];
 
     return (
@@ -297,7 +371,11 @@ class _ChartCard extends StatelessWidget {
       mem.usedGb.toStringAsFixed(1),
       'GB',
       hist,
-      [['MIN', '$minVal%'], ['AVG', '$avgVal%'], ['MAX', '$maxVal%']],
+      [
+        ['TOTAL', '${mem.totalGb.toStringAsFixed(1)} GB'],
+        ['USED', '${mem.usedGb.toStringAsFixed(1)} GB (${mem.usagePercent.round()}%)'],
+        ['AVAIL', '${mem.availableGb.toStringAsFixed(1)} GB'],
+      ],
       breakdown,
     );
   }
@@ -309,7 +387,7 @@ class _ChartCard extends StatelessWidget {
         const [.1, .2, .15, .3, .25, .42],
         const [['MIN', '2 MB/s'], ['AVG', '18 MB/s'], ['MAX', '42 MB/s']],
         const [
-          ['/', 0.45, AxColors.accent, '298 GB free'],
+          ['/', 0.45, AxColors.accent, '280 GB avail · 214 GB used'],
         ],
       );
     }
@@ -324,7 +402,7 @@ class _ChartCard extends StatelessWidget {
         m.mountPoint,
         r,
         r > 0.85 ? AxColors.bad : AxColors.accent,
-        '${m.freeGb.toStringAsFixed(0)} GB free · ${m.usedGb.toStringAsFixed(0)} GB used',
+        '${m.availableGb.toStringAsFixed(0)} GB avail · ${m.usedGb.toStringAsFixed(0)} GB used',
       ];
     }).toList();
 
@@ -335,11 +413,12 @@ class _ChartCard extends StatelessWidget {
       hist,
       [
         ['USED', '${disk.usedGb.toStringAsFixed(0)} GB (${disk.usagePercent.round()}%)'],
+        ['AVAIL', '${disk.availableGb.toStringAsFixed(0)} GB'],
         ['FREE', '${disk.freeGb.toStringAsFixed(0)} GB'],
         ['READ', '${disk.readMbPerSec.toStringAsFixed(1)} M/s'],
         ['WRITE', '${disk.writeMbPerSec.toStringAsFixed(1)} M/s'],
       ],
-      breakdown.isEmpty ? [['/', 0.42, AxColors.accent, '298 GB free']] : breakdown,
+      breakdown.isEmpty ? [['/', 0.42, AxColors.accent, '280 GB avail · 214 GB used']] : breakdown,
     );
   }
 
@@ -377,7 +456,9 @@ class _ChartCard extends StatelessWidget {
   }
 }
 
-class _ProcessTable extends StatelessWidget {
+enum _ProcSortCol { pid, name, user, cpu, mem }
+
+class _ProcessTable extends StatefulWidget {
   final String query;
   final ValueChanged<String> onQuery;
   final List<LiveProcessInfo> liveProcs;
@@ -391,9 +472,28 @@ class _ProcessTable extends StatelessWidget {
   });
 
   @override
+  State<_ProcessTable> createState() => _ProcessTableState();
+}
+
+class _ProcessTableState extends State<_ProcessTable> {
+  _ProcSortCol _sortCol = _ProcSortCol.cpu;
+  bool _sortAsc = false;
+
+  void _onSort(_ProcSortCol col) {
+    setState(() {
+      if (_sortCol == col) {
+        _sortAsc = !_sortAsc;
+      } else {
+        _sortCol = col;
+        _sortAsc = (col == _ProcSortCol.name || col == _ProcSortCol.user || col == _ProcSortCol.pid);
+      }
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final procsSource = liveProcs.isNotEmpty
-        ? liveProcs.map((p) => ProcInfo(
+    final procsSource = widget.liveProcs.isNotEmpty
+        ? widget.liveProcs.map((p) => ProcInfo(
               pid: p.pid,
               name: p.name,
               user: p.user,
@@ -403,11 +503,44 @@ class _ProcessTable extends StatelessWidget {
             )).toList()
         : procs;
 
-    final filtered = query.isEmpty
-        ? procsSource
-        : procsSource.where((p) => p.name.toLowerCase().contains(query.toLowerCase()) || p.user.toLowerCase().contains(query.toLowerCase()) || p.pid.toString().contains(query)).toList();
+    // Helper map for live memory label if available
+    final liveMemMap = <int, String>{
+      for (final lp in widget.liveProcs) lp.pid: lp.memoryLabel,
+    };
+    final liveRssMap = <int, int>{
+      for (final lp in widget.liveProcs) lp.pid: lp.rssBytes,
+    };
 
-    final displayCount = totalCount > 0 ? totalCount : filtered.length;
+    final filtered = (widget.query.isEmpty
+        ? procsSource
+        : procsSource.where((p) =>
+            p.name.toLowerCase().contains(widget.query.toLowerCase()) ||
+            p.user.toLowerCase().contains(widget.query.toLowerCase()) ||
+            p.pid.toString().contains(widget.query)).toList())
+      ..sort((a, b) {
+        int cmp = 0;
+        switch (_sortCol) {
+          case _ProcSortCol.pid:
+            cmp = a.pid.compareTo(b.pid);
+          case _ProcSortCol.name:
+            cmp = a.name.toLowerCase().compareTo(b.name.toLowerCase());
+          case _ProcSortCol.user:
+            cmp = a.user.toLowerCase().compareTo(b.user.toLowerCase());
+          case _ProcSortCol.cpu:
+            cmp = a.cpu.compareTo(b.cpu);
+          case _ProcSortCol.mem:
+            final rssA = liveRssMap[a.pid] ?? 0;
+            final rssB = liveRssMap[b.pid] ?? 0;
+            if (rssA > 0 || rssB > 0) {
+              cmp = rssA.compareTo(rssB);
+            } else {
+              cmp = a.mem.compareTo(b.mem);
+            }
+        }
+        return _sortAsc ? cmp : -cmp;
+      });
+
+    final displayCount = widget.totalCount > 0 ? widget.totalCount : filtered.length;
 
     return Container(
       decoration: BoxDecoration(color: AxColors.s1, borderRadius: BorderRadius.circular(AxRadius.xl), border: Border.all(color: AxColors.line)),
@@ -430,7 +563,7 @@ class _ProcessTable extends StatelessWidget {
                       const SizedBox(width: 7),
                       Expanded(
                         child: TextField(
-                          onChanged: onQuery,
+                          onChanged: widget.onQuery,
                           style: AxTextStyles.mono.copyWith(fontSize: 11.5),
                           decoration: const InputDecoration(border: InputBorder.none, isDense: true, hintText: 'filter by name, pid or user'),
                         ),
@@ -446,21 +579,63 @@ class _ProcessTable extends StatelessWidget {
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: SizedBox(
-              width: 640,
+              width: 700,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   Container(
                     color: AxColors.s2,
                     padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 8),
-                    child: const Row(
+                    child: Row(
                       children: [
-                        SizedBox(width: 62, child: _ColHead('PID')),
-                        Expanded(flex: 3, child: _ColHead('NAME')),
-                        SizedBox(width: 78, child: _ColHead('USER')),
-                        SizedBox(width: 74, child: _ColHead('CPU%', alignEnd: true)),
-                        SizedBox(width: 74, child: _ColHead('MEM%', alignEnd: true)),
-                        SizedBox(width: 96, child: _ColHead('', alignEnd: true)),
+                        SizedBox(
+                          width: 68,
+                          child: _SortableColHead(
+                            text: 'PID',
+                            active: _sortCol == _ProcSortCol.pid,
+                            asc: _sortAsc,
+                            onTap: () => _onSort(_ProcSortCol.pid),
+                          ),
+                        ),
+                        Expanded(
+                          flex: 3,
+                          child: _SortableColHead(
+                            text: 'NAME',
+                            active: _sortCol == _ProcSortCol.name,
+                            asc: _sortAsc,
+                            onTap: () => _onSort(_ProcSortCol.name),
+                          ),
+                        ),
+                        SizedBox(
+                          width: 78,
+                          child: _SortableColHead(
+                            text: 'USER',
+                            active: _sortCol == _ProcSortCol.user,
+                            asc: _sortAsc,
+                            onTap: () => _onSort(_ProcSortCol.user),
+                          ),
+                        ),
+                        SizedBox(
+                          width: 78,
+                          child: _SortableColHead(
+                            text: 'CPU%',
+                            alignEnd: true,
+                            active: _sortCol == _ProcSortCol.cpu,
+                            asc: _sortAsc,
+                            onTap: () => _onSort(_ProcSortCol.cpu),
+                          ),
+                        ),
+                        SizedBox(
+                          width: 110,
+                          child: _SortableColHead(
+                            text: 'MEM',
+                            alignEnd: true,
+                            active: _sortCol == _ProcSortCol.mem,
+                            asc: _sortAsc,
+                            onTap: () => _onSort(_ProcSortCol.mem),
+                          ),
+                        ),
+                        const SizedBox(width: 96, child: _ColHead('', alignEnd: true)),
                       ],
                     ),
                   ),
@@ -470,7 +645,7 @@ class _ProcessTable extends StatelessWidget {
                       decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: Color(0x0BE8F0E6)))),
                       child: Row(
                         children: [
-                          SizedBox(width: 62, child: Text('${p.pid}', style: AxTextStyles.mono.copyWith(fontSize: 11.5, color: AxColors.fg3))),
+                          SizedBox(width: 68, child: Text('${p.pid}', style: AxTextStyles.mono.copyWith(fontSize: 11.5, color: AxColors.fg3))),
                           Expanded(
                             flex: 3,
                             child: Row(
@@ -482,8 +657,18 @@ class _ProcessTable extends StatelessWidget {
                             ),
                           ),
                           SizedBox(width: 78, child: Text(p.user, style: AxTextStyles.mono.copyWith(fontSize: 11, color: AxColors.fg2))),
-                          SizedBox(width: 74, child: Text('${p.cpu}%', textAlign: TextAlign.right, style: AxTextStyles.mono.copyWith(fontSize: 11.5, color: p.cpu > 5 ? AxColors.warn : AxColors.fg))),
-                          SizedBox(width: 74, child: Text('${p.mem}%', textAlign: TextAlign.right, style: AxTextStyles.mono.copyWith(fontSize: 11.5, color: AxColors.fg2))),
+                          SizedBox(width: 78, child: Text('${p.cpu.toStringAsFixed(1)}%', textAlign: TextAlign.right, style: AxTextStyles.mono.copyWith(fontSize: 11.5, color: p.cpu > 5 ? AxColors.warn : AxColors.fg))),
+                          SizedBox(
+                            width: 110,
+                            child: Text(
+                              liveMemMap[p.pid] != null
+                                  ? '${liveMemMap[p.pid]} (${p.mem.toStringAsFixed(1)}%)'
+                                  : '${p.mem.toStringAsFixed(1)}%',
+                              textAlign: TextAlign.right,
+                              style: AxTextStyles.mono.copyWith(fontSize: 11.5, color: AxColors.fg2),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
                           SizedBox(
                             width: 96,
                             child: Row(
@@ -647,4 +832,53 @@ class _ColHead extends StatelessWidget {
     return Text(text, textAlign: alignEnd ? TextAlign.right : TextAlign.left, style: AxTextStyles.label);
   }
 }
+
+class _SortableColHead extends StatelessWidget {
+  final String text;
+  final bool alignEnd;
+  final bool active;
+  final bool asc;
+  final VoidCallback onTap;
+
+  const _SortableColHead({
+    required this.text,
+    this.alignEnd = false,
+    required this.active,
+    required this.asc,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(4),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2),
+        child: Row(
+          mainAxisAlignment: alignEnd ? MainAxisAlignment.end : MainAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              text,
+              style: AxTextStyles.label.copyWith(
+                color: active ? AxColors.accent : AxColors.fg3,
+                fontWeight: active ? FontWeight.bold : FontWeight.w600,
+              ),
+            ),
+            if (active) ...[
+              const SizedBox(width: 3),
+              Icon(
+                asc ? Icons.arrow_upward : Icons.arrow_downward,
+                size: 11,
+                color: AxColors.accent,
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 

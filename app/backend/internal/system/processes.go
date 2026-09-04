@@ -21,6 +21,7 @@ type ProcessInfo struct {
 	User       string  `json:"user"`
 	CPUPercent float64 `json:"cpu"`
 	MemPercent float64 `json:"mem"`
+	RssBytes   uint64  `json:"rss_bytes"`
 	State      string  `json:"state"` // "R" | "S" | "Z" | etc.
 }
 
@@ -238,6 +239,7 @@ func readProc(pid int, totalMemKb uint64) *ProcessInfo {
 	rssPages, _ := strconv.ParseUint(fields[21], 10, 64)
 	pageSizeKb := uint64(os.Getpagesize() / 1024)
 	rssKb := rssPages * pageSizeKb
+	rssBytes := rssKb * 1024
 
 	memPct := (float64(rssKb) / float64(totalMemKb)) * 100.0
 
@@ -247,18 +249,19 @@ func readProc(pid int, totalMemKb uint64) *ProcessInfo {
 		User:       userName,
 		CPUPercent: cpuPct,
 		MemPercent: float64(int(memPct*10)) / 10.0,
+		RssBytes:   rssBytes,
 		State:      state,
 	}
 }
 
 func fallbackProcesses() ProcessListResponse {
 	procs := []ProcessInfo{
-		{PID: 1, Name: "systemd", User: "root", CPUPercent: 0.1, MemPercent: 0.1, State: "S"},
-		{PID: 811, Name: "sshd", User: "root", CPUPercent: 0.0, MemPercent: 0.1, State: "S"},
-		{PID: 987, Name: "dockerd", User: "root", CPUPercent: 1.9, MemPercent: 1.4, State: "S"},
-		{PID: 1142, Name: "caddy", User: "caddy", CPUPercent: 0.6, MemPercent: 0.3, State: "S"},
-		{PID: 1330, Name: "postgres", User: "postgres", CPUPercent: 1.3, MemPercent: 2.6, State: "S"},
-		{PID: 2044, Name: "archangeld", User: "root", CPUPercent: 0.7, MemPercent: 0.6, State: "R"},
+		{PID: 1, Name: "systemd", User: "root", CPUPercent: 0.1, MemPercent: 0.1, RssBytes: 12 * 1024 * 1024, State: "S"},
+		{PID: 811, Name: "sshd", User: "root", CPUPercent: 0.0, MemPercent: 0.1, RssBytes: 8 * 1024 * 1024, State: "S"},
+		{PID: 987, Name: "dockerd", User: "root", CPUPercent: 1.9, MemPercent: 1.4, RssBytes: 85 * 1024 * 1024, State: "S"},
+		{PID: 1142, Name: "caddy", User: "caddy", CPUPercent: 0.6, MemPercent: 0.3, RssBytes: 28 * 1024 * 1024, State: "S"},
+		{PID: 1330, Name: "postgres", User: "postgres", CPUPercent: 1.3, MemPercent: 2.6, RssBytes: 164 * 1024 * 1024, State: "S"},
+		{PID: 2044, Name: "archangeld", User: "root", CPUPercent: 0.7, MemPercent: 0.6, RssBytes: 36 * 1024 * 1024, State: "R"},
 	}
 	return ProcessListResponse{
 		TotalCount: len(procs),

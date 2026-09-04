@@ -36,8 +36,36 @@ class MonitoringService extends ChangeNotifier {
   StreamSubscription? _wsSub;
   Timer? _procTimer;
   ArchangeldConnection? _backend;
+  int _desiredIntervalMs = 2000;
 
   bool get isConnected => _status == MonitoringStatus.connected;
+  int get pollingRateMs => _desiredIntervalMs;
+
+  /// Dynamically changes polling frequency (e.g. 1000ms when viewing Monitoring tab,
+  /// 5000ms when on other tabs). Sends dynamic control frame to archangeld.
+  void setPollingRateMs(int intervalMs) {
+    if (intervalMs < 250 || intervalMs > 30000) return;
+    _desiredIntervalMs = intervalMs;
+
+    // Send control message over WebSocket if connected
+    if (_wsChannel != null && _status == MonitoringStatus.connected) {
+      try {
+        _wsChannel!.sink.add(jsonEncode({
+          'action': 'set_rate',
+          'interval_ms': intervalMs,
+        }));
+      } catch (e) {
+        debugPrint('Failed sending rate control frame: $e');
+      }
+    }
+
+    // Also adjust process polling cadence (e.g. 2x the metrics cadence)
+    _procTimer?.cancel();
+    final procInterval = Duration(milliseconds: (intervalMs * 2).clamp(2000, 10000));
+    _procTimer = Timer.periodic(procInterval, (_) {
+      fetchProcesses();
+    });
+  }
 
   void start(ArchangeldConnection backend) {
     if (_backend == backend && _status == MonitoringStatus.connected) {
@@ -120,7 +148,15 @@ class MonitoringService extends ChangeNotifier {
     try {
       final data = jsonDecode(raw.toString()) as Map<String, dynamic>;
       _metrics = SystemMetrics.fromJson(data);
-      _status = MonitoringStatus.connected;
+      if (_status != MonitoringStatus.connected) {
+        _status = MonitoringStatus.connected;
+        if (_desiredIntervalMs != 2000 && _wsChannel != null) {
+          _wsChannel!.sink.add(jsonEncode({
+            'action': 'set_rate',
+            'interval_ms': _desiredIntervalMs,
+          }));
+        }
+      }
       _error = null;
       notifyListeners();
     } catch (e) {

@@ -54,6 +54,11 @@ class MemoryMetrics {
   final int totalBytes;
   final int usedBytes;
   final int availableBytes;
+  final int freeBytes;
+  final int buffersBytes;
+  final int cachedBytes;
+  final int swapTotalBytes;
+  final int swapUsedBytes;
   final double usagePercent;
   final List<double> history;
 
@@ -61,6 +66,11 @@ class MemoryMetrics {
     required this.totalBytes,
     required this.usedBytes,
     required this.availableBytes,
+    this.freeBytes = 0,
+    this.buffersBytes = 0,
+    this.cachedBytes = 0,
+    this.swapTotalBytes = 0,
+    this.swapUsedBytes = 0,
     required this.usagePercent,
     required this.history,
   });
@@ -74,6 +84,11 @@ class MemoryMetrics {
       totalBytes: (json['total_bytes'] as num?)?.toInt() ?? 0,
       usedBytes: (json['used_bytes'] as num?)?.toInt() ?? 0,
       availableBytes: (json['available_bytes'] as num?)?.toInt() ?? 0,
+      freeBytes: (json['free_bytes'] as num?)?.toInt() ?? 0,
+      buffersBytes: (json['buffers_bytes'] as num?)?.toInt() ?? 0,
+      cachedBytes: (json['cached_bytes'] as num?)?.toInt() ?? 0,
+      swapTotalBytes: (json['swap_total_bytes'] as num?)?.toInt() ?? 0,
+      swapUsedBytes: (json['swap_used_bytes'] as num?)?.toInt() ?? 0,
       usagePercent: (json['usage_percent'] as num?)?.toDouble() ?? 0.0,
       history: hist,
     );
@@ -82,6 +97,19 @@ class MemoryMetrics {
   double get totalGb => totalBytes / (1024 * 1024 * 1024);
   double get usedGb => usedBytes / (1024 * 1024 * 1024);
   double get availableGb => availableBytes / (1024 * 1024 * 1024);
+  double get freeGb => freeBytes / (1024 * 1024 * 1024);
+  double get cachedGb => (cachedBytes + buffersBytes) / (1024 * 1024 * 1024);
+  double get swapUsedGb => swapUsedBytes / (1024 * 1024 * 1024);
+  double get swapTotalGb => swapTotalBytes / (1024 * 1024 * 1024);
+
+  // App / System memory (total used minus cache/buffers)
+  double get appUsedGb {
+    final cacheAndBuffers = cachedBytes + buffersBytes;
+    if (usedBytes > cacheAndBuffers) {
+      return (usedBytes - cacheAndBuffers) / (1024 * 1024 * 1024);
+    }
+    return usedGb;
+  }
 }
 
 class MountMetric {
@@ -90,6 +118,7 @@ class MountMetric {
   final int totalBytes;
   final int usedBytes;
   final int freeBytes;
+  final int availableBytes;
 
   const MountMetric({
     required this.mountPoint,
@@ -97,6 +126,7 @@ class MountMetric {
     required this.totalBytes,
     required this.usedBytes,
     this.freeBytes = 0,
+    this.availableBytes = 0,
   });
 
   factory MountMetric.fromJson(Map<String, dynamic> json) {
@@ -106,6 +136,7 @@ class MountMetric {
       totalBytes: (json['total_bytes'] as num?)?.toInt() ?? 0,
       usedBytes: (json['used_bytes'] as num?)?.toInt() ?? 0,
       freeBytes: (json['free_bytes'] as num?)?.toInt() ?? 0,
+      availableBytes: (json['available_bytes'] as num?)?.toInt() ?? 0,
     );
   }
 
@@ -114,6 +145,7 @@ class MountMetric {
   double get totalGb => totalBytes / (1024 * 1024 * 1024);
   double get usedGb => usedBytes / (1024 * 1024 * 1024);
   double get freeGb => (freeBytes > 0 ? freeBytes : (totalBytes > usedBytes ? totalBytes - usedBytes : 0)) / (1024 * 1024 * 1024);
+  double get availableGb => (availableBytes > 0 ? availableBytes : freeBytes) / (1024 * 1024 * 1024);
 }
 
 class DiskMetrics {
@@ -122,6 +154,7 @@ class DiskMetrics {
   final int totalBytes;
   final int usedBytes;
   final int freeBytes;
+  final int availableBytes;
   final double usagePercent;
   final List<MountMetric> mounts;
   final List<double> history;
@@ -132,6 +165,7 @@ class DiskMetrics {
     required this.totalBytes,
     required this.usedBytes,
     this.freeBytes = 0,
+    this.availableBytes = 0,
     required this.usagePercent,
     required this.mounts,
     required this.history,
@@ -153,6 +187,7 @@ class DiskMetrics {
       totalBytes: (json['total_bytes'] as num?)?.toInt() ?? 0,
       usedBytes: (json['used_bytes'] as num?)?.toInt() ?? 0,
       freeBytes: (json['free_bytes'] as num?)?.toInt() ?? 0,
+      availableBytes: (json['available_bytes'] as num?)?.toInt() ?? 0,
       usagePercent: (json['usage_percent'] as num?)?.toDouble() ?? 0.0,
       mounts: mountsList,
       history: hist,
@@ -165,6 +200,7 @@ class DiskMetrics {
   double get totalGb => totalBytes / (1024 * 1024 * 1024);
   double get usedGb => usedBytes / (1024 * 1024 * 1024);
   double get freeGb => (freeBytes > 0 ? freeBytes : (totalBytes > usedBytes ? totalBytes - usedBytes : 0)) / (1024 * 1024 * 1024);
+  double get availableGb => (availableBytes > 0 ? availableBytes : freeBytes) / (1024 * 1024 * 1024);
 }
 
 class NetInterfaceMetric {
@@ -180,7 +216,7 @@ class NetInterfaceMetric {
 
   factory NetInterfaceMetric.fromJson(Map<String, dynamic> json) {
     return NetInterfaceMetric(
-      name: json['name'] as String? ?? '',
+      name: json['name'] as String? ?? 'eth0',
       rxBytesPerSec: (json['rx_bytes_per_sec'] as num?)?.toDouble() ?? 0.0,
       txBytesPerSec: (json['tx_bytes_per_sec'] as num?)?.toDouble() ?? 0.0,
     );
@@ -274,6 +310,7 @@ class LiveProcessInfo {
   final String user;
   final double cpu;
   final double mem;
+  final int rssBytes;
   final String state;
 
   const LiveProcessInfo({
@@ -282,6 +319,7 @@ class LiveProcessInfo {
     required this.user,
     required this.cpu,
     required this.mem,
+    this.rssBytes = 0,
     required this.state,
   });
 
@@ -292,7 +330,19 @@ class LiveProcessInfo {
       user: json['user'] as String? ?? '',
       cpu: (json['cpu'] as num?)?.toDouble() ?? 0.0,
       mem: (json['mem'] as num?)?.toDouble() ?? 0.0,
+      rssBytes: (json['rss_bytes'] as num?)?.toInt() ?? 0,
       state: json['state'] as String? ?? 'S',
     );
+  }
+
+  String get memoryLabel {
+    if (rssBytes <= 0) {
+      return '${mem.toStringAsFixed(1)}%';
+    }
+    final mb = rssBytes / (1024 * 1024);
+    if (mb >= 1024) {
+      return '${(mb / 1024.0).toStringAsFixed(1)} GB';
+    }
+    return '${mb.toStringAsFixed(1)} MB';
   }
 }
