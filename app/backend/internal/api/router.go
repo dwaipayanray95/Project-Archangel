@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/dwaipayanray95/project-archangel/backend/internal/auth"
+	"github.com/dwaipayanray95/project-archangel/backend/internal/files"
 	"github.com/dwaipayanray95/project-archangel/backend/internal/system"
 	"github.com/dwaipayanray95/project-archangel/backend/internal/terminal"
 	"github.com/dwaipayanray95/project-archangel/backend/internal/version"
@@ -32,7 +33,12 @@ func NewRouter(verify auth.Verifier) http.Handler {
 	mux.Handle("POST /api/v1/system/processes/{pid}/renice", auth.Middleware(verify, http.HandlerFunc(system.ProcessReniceHandler)))
 	mux.Handle("GET /ws/stats", auth.Middleware(verify, http.HandlerFunc(system.StatsWsHandler)))
 
-	// Milestones 2-4 add their routes here: /api/v1/files/*,
+	// Files explorer & previewer
+	mux.Handle("GET /api/v1/files/list", auth.Middleware(verify, http.HandlerFunc(files.ListHandler)))
+	mux.Handle("GET /api/v1/files/read", auth.Middleware(verify, http.HandlerFunc(files.ReadHandler)))
+	mux.Handle("GET /api/v1/files/download", auth.Middleware(verify, http.HandlerFunc(files.DownloadHandler)))
+
+	// Milestones 3-4 add their routes here:
 	// /api/v1/services/*, /api/v1/docker/*, /api/v1/oci/*.
 
 	return withLogging(mux)

@@ -1,0 +1,209 @@
+import 'dart:convert';
+import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
+import '../data/mock_data.dart';
+import '../models/file_entry.dart';
+import 'archangeld_connection.dart';
+
+class FilesService extends ChangeNotifier {
+  String _currentPath = '/var/log';
+  String get currentPath => _currentPath;
+
+  bool _showHidden = false;
+  bool get showHidden => _showHidden;
+  void toggleShowHidden() {
+    _showHidden = !_showHidden;
+    notifyListeners();
+  }
+
+  bool _loading = false;
+  bool get loading => _loading;
+
+  String? _error;
+  String? get error => _error;
+
+  DirectoryListingModel? _listing;
+  DirectoryListingModel? get listing => _listing;
+
+  // In-memory directory cache: path -> listing (for instant navigation)
+  final Map<String, DirectoryListingModel> _dirCache = {};
+
+  // File preview cache and state
+  String? _activePreviewPath;
+  String? get activePreviewPath => _activePreviewPath;
+
+  bool _previewLoading = false;
+  bool get previewLoading => _previewLoading;
+
+  FileContentResult? _fileContent;
+  FileContentResult? get fileContent => _fileContent;
+
+  ArchangeldConnection? _backend;
+
+  void init(ArchangeldConnection backend) {
+    _backend = backend;
+    loadDirectory(_currentPath);
+  }
+
+  Future<void> loadDirectory(String path, {bool forceRefresh = false}) async {
+    _currentPath = path;
+
+    // Instant UI render from cache if available
+    if (!forceRefresh && _dirCache.containsKey(path)) {
+      _listing = _dirCache[path];
+      _error = null;
+      notifyListeners();
+    } else {
+      _loading = true;
+      _error = null;
+      notifyListeners();
+    }
+
+    final backend = _backend;
+    if (backend == null || !backend.isPaired || backend.token == null) {
+      _loadMockDirectory(path);
+      return;
+    }
+
+    try {
+      final res = await http.get(
+        backend.filesListHttpUri(path),
+        headers: {'X-Archangel-Token': backend.token!},
+      );
+
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body) as Map<String, dynamic>;
+        final newListing = DirectoryListingModel.fromJson(data);
+        _listing = newListing;
+        _dirCache[path] = newListing;
+        _error = null;
+      } else if (res.statusCode == 403) {
+        final data = jsonDecode(res.body) as Map<String, dynamic>;
+        _listing = DirectoryListingModel.fromJson(data);
+        _error = _listing?.error ?? 'Permission denied';
+      } else {
+        if (!_dirCache.containsKey(path)) {
+          _loadMockDirectory(path);
+        }
+      }
+    } catch (e) {
+      debugPrint('Error listing directory $path: $e');
+      if (!_dirCache.containsKey(path)) {
+        _loadMockDirectory(path);
+      }
+    } finally {
+      _loading = false;
+      notifyListeners();
+    }
+  }
+
+
+
+  void _loadMockDirectory(String path) {
+    final mockEntries = dirs[path];
+    if (mockEntries != null) {
+      final entries = mockEntries.map((e) => FileEntryModel(
+        name: e.name,
+        path: path == '/' ? '/${e.name}' : '$path/${e.name}',
+        kind: e.kind,
+        sizeBytes: 0,
+        size: e.size,
+        perms: e.perms,
+        mtime: e.mtime,
+      )).toList();
+
+      _listing = DirectoryListingModel(
+        path: path,
+        parent: path == '/' ? '/' : path.substring(0, path.lastIndexOf('/')),
+        entries: entries,
+        totalEntries: entries.length,
+        readable: true,
+      );
+      _error = null;
+    } else {
+      _listing = DirectoryListingModel(
+        path: path,
+        parent: '/',
+        entries: const [],
+        totalEntries: 0,
+        readable: true,
+      );
+    }
+    _loading = false;
+  }
+
+  Future<void> openFilePreview(String path) async {
+    _activePreviewPath = path;
+    _previewLoading = true;
+    _fileContent = null;
+    notifyListeners();
+
+    final backend = _backend;
+    if (backend == null || !backend.isPaired || backend.token == null) {
+      _loadMockPreview(path);
+      return;
+    }
+
+    try {
+      final res = await http.get(
+        backend.filesReadHttpUri(path, lines: 400),
+        headers: {'X-Archangel-Token': backend.token!},
+      );
+
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body) as Map<String, dynamic>;
+        _fileContent = FileContentResult.fromJson(data);
+      } else {
+        _loadMockPreview(path);
+      }
+    } catch (e) {
+      debugPrint('Error reading file preview $path: $e');
+      _loadMockPreview(path);
+    } finally {
+      _previewLoading = false;
+      notifyListeners();
+    }
+  }
+
+  void _loadMockPreview(String path) {
+    final fileName = path.split('/').last;
+    final mockLines = filePreviews[fileName] ?? const ['(no preview available for this file type)'];
+    _fileContent = FileContentResult(
+      path: path,
+      name: fileName,
+      sizeBytes: 1024,
+      lines: mockLines,
+      lineCount: mockLines.length,
+      truncated: false,
+      isBinary: false,
+      mimeType: 'text/plain',
+    );
+    _previewLoading = false;
+  }
+
+  void closePreview() {
+    _activePreviewPath = null;
+    _fileContent = null;
+    _previewLoading = false;
+    notifyListeners();
+  }
+
+  Future<Uint8List?> downloadFileBytes(String path) async {
+    final backend = _backend;
+    if (backend == null || !backend.isPaired || backend.token == null) {
+      return null;
+    }
+    try {
+      final res = await http.get(
+        backend.filesDownloadHttpUri(path),
+        headers: {'X-Archangel-Token': backend.token!},
+      );
+      if (res.statusCode == 200) {
+        return res.bodyBytes;
+      }
+    } catch (e) {
+      debugPrint('Error downloading file $path: $e');
+    }
+    return null;
+  }
+}
