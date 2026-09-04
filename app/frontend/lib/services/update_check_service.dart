@@ -3,7 +3,9 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 
-const _kGithubRepoSlug = 'dwaipayanray95/Project-Archangel';
+/// "owner/repo" this app checks releases against - matches
+/// VpsSetupConfig.githubRepoSlug's default (see vps_setup_service.dart).
+const kGithubRepoSlug = 'dwaipayanray95/Project-Archangel';
 const _kManifestAssetName = 'version-manifest.json';
 const _kCacheMaxAge = Duration(hours: 24);
 
@@ -32,6 +34,15 @@ class UpdateCheckService extends ChangeNotifier {
   String? _latestBackend;
   String? get latestBackend => _latestBackend;
 
+  /// The tag whose release assets actually carry the current backend
+  /// binary - NOT necessarily the same as the latest release's own tag,
+  /// since [latestBackend] can be frozen (unchanged) across several
+  /// releases in a row (see release.yml's freeze logic). This is what
+  /// BackendUpdateService downloads from - `releases/latest/download/`
+  /// would silently 404 on a release that didn't touch the backend.
+  String? _backendTag;
+  String? get backendTag => _backendTag;
+
   /// The GitHub Releases page URL for the release the current manifest
   /// came from - what an "update available" badge links to.
   String? _releaseUrl;
@@ -54,6 +65,7 @@ class UpdateCheckService extends ChangeNotifier {
       _latestArchangel = data['archangel'] as String?;
       _latestFrontend = data['frontend'] as String?;
       _latestBackend = data['backend'] as String?;
+      _backendTag = data['backendTag'] as String?;
       _releaseUrl = data['releaseUrl'] as String?;
       final checkedAt = data['checkedAt'] as String?;
       if (checkedAt != null) _lastChecked = DateTime.tryParse(checkedAt);
@@ -79,7 +91,7 @@ class UpdateCheckService extends ChangeNotifier {
 
     try {
       final releaseRes = await _client.get(
-        Uri.parse('https://api.github.com/repos/$_kGithubRepoSlug/releases/latest'),
+        Uri.parse('https://api.github.com/repos/$kGithubRepoSlug/releases/latest'),
         headers: {'Accept': 'application/vnd.github+json'},
       );
       if (releaseRes.statusCode != 200) return;
@@ -99,6 +111,7 @@ class UpdateCheckService extends ChangeNotifier {
       _latestArchangel = manifest['archangel'] as String?;
       _latestFrontend = manifest['frontend'] as String?;
       _latestBackend = manifest['backend'] as String?;
+      _backendTag = manifest['backend_tag'] as String?;
       _releaseUrl = release['html_url'] as String?;
       _lastChecked = DateTime.now();
 
@@ -108,6 +121,7 @@ class UpdateCheckService extends ChangeNotifier {
           'archangel': _latestArchangel,
           'frontend': _latestFrontend,
           'backend': _latestBackend,
+          'backendTag': _backendTag,
           'releaseUrl': _releaseUrl,
           'checkedAt': _lastChecked!.toIso8601String(),
         }),

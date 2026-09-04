@@ -200,4 +200,82 @@ void main() {
       expect(bundle.tunnel.peerEndpoint, '203.0.113.5:51820');
     });
   });
+
+  group('VpsSetupService.updateBackend', () {
+    test('backs up, downloads, restarts, and confirms via the health poll', () async {
+      final ssh = FakeSshTransport(responses: [
+        (RegExp(r'uname -m'), const SshExecResult(exitCode: 0, stdout: 'x86_64', stderr: '')),
+      ]);
+      final service = VpsSetupService(ssh);
+      var polls = 0;
+
+      final events = await service
+          .updateBackend(
+            targetVersion: '0.3.0',
+            releaseTag: 'v0.3.0-b',
+            githubRepoSlug: 'owner/repo',
+            fetchLiveVersion: () async {
+              polls++;
+              return '0.3.0'; // "comes up correctly" on the first poll
+            },
+            pollInterval: Duration.zero,
+          )
+          .toList();
+
+      expect(ssh.commands.any((c) => c.contains('cp -f /opt/archangel/archangeld /opt/archangel/archangeld.bak')), isTrue);
+      expect(ssh.commands.any((c) => c.contains('releases/download/v0.3.0-b/archangeld-amd64')), isTrue);
+      expect(ssh.commands.any((c) => c == 'sudo systemctl restart archangel'), isTrue);
+      expect(polls, greaterThanOrEqualTo(1));
+      expect(events.last.stage, 'restart');
+      expect(events.last.stageComplete, isTrue);
+    });
+
+    test('rolls back automatically if the new version never comes up', () async {
+      final ssh = FakeSshTransport(responses: [
+        (RegExp(r'uname -m'), const SshExecResult(exitCode: 0, stdout: 'x86_64', stderr: '')),
+      ]);
+      final service = VpsSetupService(ssh);
+
+      await expectLater(
+        service.updateBackend(
+          targetVersion: '0.3.0',
+          releaseTag: 'v0.3.0-b',
+          githubRepoSlug: 'owner/repo',
+          // Health poll never reports the new version - simulates a
+          // crash-looping or otherwise broken new binary.
+          fetchLiveVersion: () async => '0.2.2',
+          pollInterval: Duration.zero,
+        ),
+        emitsThrough(emitsError(isA<VpsSetupException>())),
+      );
+
+      expect(
+        ssh.commands.any((c) => c.contains('mv -f /opt/archangel/archangeld.bak /opt/archangel/archangeld')),
+        isTrue,
+        reason: 'a failed post-update health check must restore the backup binary',
+      );
+    }, timeout: const Timeout(Duration(seconds: 30)));
+
+    test('fails without touching the live binary if the download does not report the expected version', () async {
+      final ssh = FakeSshTransport(responses: [
+        (RegExp(r'uname -m'), const SshExecResult(exitCode: 0, stdout: 'x86_64', stderr: '')),
+        // Simulates the remote version-check failing inside the download
+        // script (exit 1 before the `mv` that would install it).
+        (RegExp(r'curl -fsSL'), const SshExecResult(exitCode: 1, stdout: '', stderr: "downloaded binary reports version '0.2.2', expected 0.3.0")),
+      ]);
+      final service = VpsSetupService(ssh);
+
+      await expectLater(
+        service.updateBackend(
+          targetVersion: '0.3.0',
+          releaseTag: 'v0.3.0-b',
+          githubRepoSlug: 'owner/repo',
+          fetchLiveVersion: () async => null,
+        ),
+        emitsThrough(emitsError(isA<VpsSetupException>())),
+      );
+
+      expect(ssh.commands.any((c) => c.contains('sudo systemctl restart archangel')), isFalse);
+    });
+  });
 }
