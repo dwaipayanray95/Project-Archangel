@@ -15,10 +15,15 @@ class SettingsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final app = context.watch<AppState>();
+    final backend = context.watch<ArchangeldConnection>();
     final ver = AppVersion.current;
+    final backendVer = backend.isPaired
+        ? (backend.backendVersion != null ? 'v${backend.backendVersion}' : 'checking…')
+        : 'not paired';
     final aboutRows = [
+      ['Archangel version', 'v${AppVersion.archangel}'],
       ['App version', 'v$ver'],
-      ['Agent', 'archangeld v$ver'],
+      ['Backend version', backendVer],
       ['Host', 'Archangel-MK1'],
       ['Paired devices', '1'],
       ['License', 'personal use'],
@@ -31,7 +36,7 @@ class SettingsScreen extends StatelessWidget {
         children: [
           Text('Settings', style: AxTextStyles.h1),
           const SizedBox(height: 3),
-          Text('Archangel v$ver · paired 1 device', style: AxTextStyles.mutedMono),
+          Text('Archangel v${AppVersion.archangel} · paired 1 device', style: AxTextStyles.mutedMono),
           const SizedBox(height: 16),
           LayoutBuilder(
             builder: (context, c) {
