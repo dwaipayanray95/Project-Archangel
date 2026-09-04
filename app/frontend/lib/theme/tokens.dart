@@ -77,4 +77,10 @@ class AxTextStyles {
     fontWeight: FontWeight.w700,
     letterSpacing: -0.3,
   );
+
+  static TextStyle h2 = sans.copyWith(
+    fontSize: 16,
+    fontWeight: FontWeight.w700,
+    letterSpacing: -0.2,
+  );
 }

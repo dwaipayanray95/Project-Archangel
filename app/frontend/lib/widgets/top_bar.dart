@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../data/app_state.dart';
+import '../services/monitoring_service.dart';
 import '../services/wireguard_controller.dart';
 import '../theme/tokens.dart';
 import 'ax_widgets.dart';
@@ -80,9 +81,22 @@ class TopBar extends StatelessWidget implements PreferredSizeWidget {
           ),
           const Spacer(),
           if (statsWide) ...[
-            _BarStat(label: 'CPU', value: '18%', color: accent),
-            _BarStat(label: 'MEM', value: '61%', color: AxColors.info),
-            _BarStat(label: 'UP', value: '42d', color: AxColors.fg2, last: true),
+            () {
+              final mon = context.watch<MonitoringService>();
+              final metrics = mon.metrics;
+              final cpuStr = metrics != null ? '${metrics.cpu.usagePercent.round()}%' : '18%';
+              final memStr = metrics != null ? '${metrics.memory.usagePercent.round()}%' : '61%';
+              final upStr = metrics != null ? metrics.uptimeLabel : '42d';
+
+              return Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _BarStat(label: 'CPU', value: cpuStr, color: accent),
+                  _BarStat(label: 'MEM', value: memStr, color: AxColors.info),
+                  _BarStat(label: 'UP', value: upStr, color: AxColors.fg2, last: true),
+                ],
+              );
+            }(),
           ],
           const SizedBox(width: 8),
               _SearchButton(wide: wide),

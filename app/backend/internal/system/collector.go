@@ -15,6 +15,7 @@ import (
 type CoreMetric struct {
 	ID           int     `json:"id"`
 	UsagePercent float64 `json:"usage_percent"`
+	Mhz          float64 `json:"mhz,omitempty"`
 }
 
 type CPUMetrics struct {
@@ -36,6 +37,7 @@ type MountMetric struct {
 	Device     string `json:"device"`
 	TotalBytes uint64 `json:"total_bytes"`
 	UsedBytes  uint64 `json:"used_bytes"`
+	FreeBytes  uint64 `json:"free_bytes"`
 }
 
 type DiskMetrics struct {
@@ -43,6 +45,7 @@ type DiskMetrics struct {
 	WriteBytesPerSec float64       `json:"write_bytes_per_sec"`
 	TotalBytes       uint64        `json:"total_bytes"`
 	UsedBytes        uint64        `json:"used_bytes"`
+	FreeBytes        uint64        `json:"free_bytes"`
 	UsagePercent     float64       `json:"usage_percent"`
 	Mounts           []MountMetric `json:"mounts"`
 	History          []float64     `json:"history"`
@@ -62,11 +65,12 @@ type NetworkMetrics struct {
 }
 
 type SystemMetrics struct {
-	Timestamp int64          `json:"timestamp"`
-	CPU       CPUMetrics     `json:"cpu"`
-	Memory    MemoryMetrics  `json:"memory"`
-	Disk      DiskMetrics    `json:"disk"`
-	Network   NetworkMetrics `json:"network"`
+	Timestamp     int64          `json:"timestamp"`
+	UptimeSeconds int64          `json:"uptime_seconds"`
+	CPU           CPUMetrics     `json:"cpu"`
+	Memory        MemoryMetrics  `json:"memory"`
+	Disk          DiskMetrics    `json:"disk"`
+	Network       NetworkMetrics `json:"network"`
 }
 
 const maxHistory = 30
@@ -174,15 +178,34 @@ func (c *Collector) Collect() SystemMetrics {
 	disk.History = append([]float64(nil), c.diskHistory...)
 	net.History = append([]float64(nil), c.netHistory...)
 
+	uptime := readUptimeSeconds()
+
 	res := SystemMetrics{
-		Timestamp: now.Unix(),
-		CPU:       cpu,
-		Memory:    mem,
-		Disk:      disk,
-		Network:   net,
+		Timestamp:     now.Unix(),
+		UptimeSeconds: uptime,
+		CPU:           cpu,
+		Memory:        mem,
+		Disk:          disk,
+		Network:       net,
 	}
 	c.latest = res
 	return res
+}
+
+func readUptimeSeconds() int64 {
+	if runtime.GOOS == "linux" {
+		data, err := os.ReadFile("/proc/uptime")
+		if err == nil {
+			fields := strings.Fields(string(data))
+			if len(fields) > 0 {
+				if sec, err := strconv.ParseFloat(fields[0], 64); err == nil {
+					return int64(sec)
+				}
+			}
+		}
+	}
+	// Fallback e.g. on dev
+	return 42*86400 + 6*3600 + 18*60
 }
 
 func appendRing(slice []float64, val float64, maxLen int) []float64 {
@@ -235,6 +258,9 @@ func (c *Collector) collectLinuxCPU() CPUMetrics {
 	}
 	c.prevTotalCPU = total
 
+	// Read per-core frequency from /proc/cpuinfo
+	mhzMap := readLinuxCpuMhz()
+
 	var coreMetrics []CoreMetric
 	for i, core := range cores {
 		var u float64
@@ -245,7 +271,11 @@ func (c *Collector) collectLinuxCPU() CPUMetrics {
 				u = (float64(ca) / float64(cd)) * 100.0
 			}
 		}
-		coreMetrics = append(coreMetrics, CoreMetric{ID: i, UsagePercent: round(u)})
+		mhz := mhzMap[i]
+		if mhz == 0 && len(mhzMap) > 0 {
+			mhz = mhzMap[0]
+		}
+		coreMetrics = append(coreMetrics, CoreMetric{ID: i, UsagePercent: round(u), Mhz: round(mhz)})
 	}
 	c.prevCores = cores
 
@@ -253,6 +283,37 @@ func (c *Collector) collectLinuxCPU() CPUMetrics {
 		UsagePercent: round(totalUsage),
 		Cores:        coreMetrics,
 	}
+}
+
+func readLinuxCpuMhz() map[int]float64 {
+	m := make(map[int]float64)
+	f, err := os.Open("/proc/cpuinfo")
+	if err != nil {
+		return m
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	currentCore := -1
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "processor") {
+			parts := strings.Split(line, ":")
+			if len(parts) == 2 {
+				if id, err := strconv.Atoi(strings.TrimSpace(parts[1])); err == nil {
+					currentCore = id
+				}
+			}
+		} else if strings.HasPrefix(line, "cpu MHz") {
+			parts := strings.Split(line, ":")
+			if len(parts) == 2 && currentCore >= 0 {
+				if val, err := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64); err == nil {
+					m[currentCore] = val
+				}
+			}
+		}
+	}
+	return m
 }
 
 func parseCPUFields(fields []string) rawCPUStat {
@@ -293,7 +354,11 @@ func (c *Collector) fallbackCPU() CPUMetrics {
 	numCPU := runtime.NumCPU()
 	var cores []CoreMetric
 	for i := 0; i < numCPU; i++ {
-		cores = append(cores, CoreMetric{ID: i, UsagePercent: 15.0 + float64(i%3)*5.0})
+		cores = append(cores, CoreMetric{
+			ID:           i,
+			UsagePercent: 15.0 + float64(i%3)*5.0,
+			Mhz:          2400.0 + float64(i*50),
+		})
 	}
 	return CPUMetrics{
 		UsagePercent: 18.4,
@@ -371,9 +436,23 @@ func (c *Collector) collectLinuxMemory() MemoryMetrics {
 }
 
 func (c *Collector) collectDisk(elapsed float64) DiskMetrics {
-	var total, used uint64 = 512 * 1024 * 1024 * 1024, 214 * 1024 * 1024 * 1024
+	var total, used, free uint64 = 512 * 1024 * 1024 * 1024, 214 * 1024 * 1024 * 1024, 298 * 1024 * 1024 * 1024
+	mountPoint := "/"
+
+	if t, f, u, err := getDiskSpace("/"); err == nil && t > 0 {
+		total = t
+		free = f
+		used = u
+	}
+
 	mounts := []MountMetric{
-		{MountPoint: "/", Device: "/dev/root", TotalBytes: total, UsedBytes: used},
+		{
+			MountPoint: mountPoint,
+			Device:     "/dev/root",
+			TotalBytes: total,
+			UsedBytes:  used,
+			FreeBytes:  free,
+		},
 	}
 
 	var readRate, writeRate float64
@@ -417,6 +496,7 @@ func (c *Collector) collectDisk(elapsed float64) DiskMetrics {
 		WriteBytesPerSec: round(writeRate),
 		TotalBytes:       total,
 		UsedBytes:        used,
+		FreeBytes:        free,
 		UsagePercent:     round(pct),
 		Mounts:           mounts,
 	}

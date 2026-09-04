@@ -1,14 +1,24 @@
 class CoreMetric {
   final int id;
   final double usagePercent;
+  final double? mhz;
 
-  const CoreMetric({required this.id, required this.usagePercent});
+  const CoreMetric({required this.id, required this.usagePercent, this.mhz});
 
   factory CoreMetric.fromJson(Map<String, dynamic> json) {
     return CoreMetric(
       id: (json['id'] as num?)?.toInt() ?? 0,
       usagePercent: (json['usage_percent'] as num?)?.toDouble() ?? 0.0,
+      mhz: (json['mhz'] as num?)?.toDouble(),
     );
+  }
+
+  String get speedLabel {
+    if (mhz == null || mhz! <= 0) return '';
+    if (mhz! >= 1000) {
+      return '${(mhz! / 1000.0).toStringAsFixed(1)} GHz';
+    }
+    return '${mhz!.round()} MHz';
   }
 }
 
@@ -79,12 +89,14 @@ class MountMetric {
   final String device;
   final int totalBytes;
   final int usedBytes;
+  final int freeBytes;
 
   const MountMetric({
     required this.mountPoint,
     required this.device,
     required this.totalBytes,
     required this.usedBytes,
+    this.freeBytes = 0,
   });
 
   factory MountMetric.fromJson(Map<String, dynamic> json) {
@@ -93,11 +105,15 @@ class MountMetric {
       device: json['device'] as String? ?? '',
       totalBytes: (json['total_bytes'] as num?)?.toInt() ?? 0,
       usedBytes: (json['used_bytes'] as num?)?.toInt() ?? 0,
+      freeBytes: (json['free_bytes'] as num?)?.toInt() ?? 0,
     );
   }
 
   double get usagePercent =>
       totalBytes > 0 ? (usedBytes / totalBytes) * 100.0 : 0.0;
+  double get totalGb => totalBytes / (1024 * 1024 * 1024);
+  double get usedGb => usedBytes / (1024 * 1024 * 1024);
+  double get freeGb => (freeBytes > 0 ? freeBytes : (totalBytes > usedBytes ? totalBytes - usedBytes : 0)) / (1024 * 1024 * 1024);
 }
 
 class DiskMetrics {
@@ -105,6 +121,7 @@ class DiskMetrics {
   final double writeBytesPerSec;
   final int totalBytes;
   final int usedBytes;
+  final int freeBytes;
   final double usagePercent;
   final List<MountMetric> mounts;
   final List<double> history;
@@ -114,6 +131,7 @@ class DiskMetrics {
     required this.writeBytesPerSec,
     required this.totalBytes,
     required this.usedBytes,
+    this.freeBytes = 0,
     required this.usagePercent,
     required this.mounts,
     required this.history,
@@ -134,6 +152,7 @@ class DiskMetrics {
           (json['write_bytes_per_sec'] as num?)?.toDouble() ?? 0.0,
       totalBytes: (json['total_bytes'] as num?)?.toInt() ?? 0,
       usedBytes: (json['used_bytes'] as num?)?.toInt() ?? 0,
+      freeBytes: (json['free_bytes'] as num?)?.toInt() ?? 0,
       usagePercent: (json['usage_percent'] as num?)?.toDouble() ?? 0.0,
       mounts: mountsList,
       history: hist,
@@ -145,6 +164,7 @@ class DiskMetrics {
   double get totalMbPerSec => readMbPerSec + writeMbPerSec;
   double get totalGb => totalBytes / (1024 * 1024 * 1024);
   double get usedGb => usedBytes / (1024 * 1024 * 1024);
+  double get freeGb => (freeBytes > 0 ? freeBytes : (totalBytes > usedBytes ? totalBytes - usedBytes : 0)) / (1024 * 1024 * 1024);
 }
 
 class NetInterfaceMetric {
@@ -207,6 +227,7 @@ class NetworkMetrics {
 
 class SystemMetrics {
   final int timestamp;
+  final int uptimeSeconds;
   final CPUMetrics cpu;
   final MemoryMetrics memory;
   final DiskMetrics disk;
@@ -214,6 +235,7 @@ class SystemMetrics {
 
   const SystemMetrics({
     required this.timestamp,
+    this.uptimeSeconds = 0,
     required this.cpu,
     required this.memory,
     required this.disk,
@@ -223,6 +245,7 @@ class SystemMetrics {
   factory SystemMetrics.fromJson(Map<String, dynamic> json) {
     return SystemMetrics(
       timestamp: (json['timestamp'] as num?)?.toInt() ?? 0,
+      uptimeSeconds: (json['uptime_seconds'] as num?)?.toInt() ?? 0,
       cpu: CPUMetrics.fromJson(
           (json['cpu'] as Map<String, dynamic>?) ?? const {}),
       memory: MemoryMetrics.fromJson(
@@ -232,6 +255,16 @@ class SystemMetrics {
       network: NetworkMetrics.fromJson(
           (json['network'] as Map<String, dynamic>?) ?? const {}),
     );
+  }
+
+  String get uptimeLabel {
+    if (uptimeSeconds <= 0) return '42d';
+    final days = uptimeSeconds ~/ 86400;
+    final hours = (uptimeSeconds % 86400) ~/ 3600;
+    if (days > 0) return '${days}d';
+    if (hours > 0) return '${hours}h';
+    final mins = (uptimeSeconds % 3600) ~/ 60;
+    return '${mins}m';
   }
 }
 
