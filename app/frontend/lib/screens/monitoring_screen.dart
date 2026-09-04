@@ -199,7 +199,7 @@ class _ChartCard extends StatelessWidget {
               children: [
                 for (final b in breakdown)
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
+                    padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
                     decoration: BoxDecoration(color: AxColors.s1, borderRadius: BorderRadius.circular(13), border: Border.all(color: AxColors.line)),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -209,6 +209,8 @@ class _ChartCard extends StatelessWidget {
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
                             Text(b[0] as String, style: AxTextStyles.mono.copyWith(fontSize: 11, color: AxColors.fg2)),
+                            if (b.length > 3 && (b[3] as String).isNotEmpty)
+                              Text(b[3] as String, style: AxTextStyles.mono.copyWith(fontSize: 10, color: AxColors.fg3)),
                             Text('${((b[1] as double) * 100).round()}%', style: AxTextStyles.mono.copyWith(fontSize: 12, fontWeight: FontWeight.w500)),
                           ],
                         ),
@@ -251,7 +253,7 @@ class _ChartCard extends StatelessWidget {
     final breakdown = cpu.cores.map((c) {
       final ratio = (c.usagePercent / 100.0).clamp(0.0, 1.0);
       final col = ratio > 0.8 ? AxColors.bad : (ratio > 0.4 ? AxColors.warn : AxColors.accent);
-      return ['core ${c.id}', ratio, col];
+      return ['core ${c.id}', ratio, col, c.speedLabel];
     }).toList();
 
     return (
@@ -271,8 +273,8 @@ class _ChartCard extends StatelessWidget {
         const [.4, .45, .5, .48, .55, .58, .6, .61],
         const [['MIN', '38%'], ['AVG', '52%'], ['MAX', '61%']],
         const [
-          ['used', 0.61, AxColors.accent],
-          ['available', 0.39, AxColors.info],
+          ['used', 0.61, AxColors.accent, '9.6 GB'],
+          ['available', 0.39, AxColors.info, '6.0 GB'],
         ],
       );
     }
@@ -286,8 +288,8 @@ class _ChartCard extends StatelessWidget {
     final avgVal = mem.history.isEmpty ? mem.usagePercent.round() : (mem.history.reduce((a, b) => a + b) / mem.history.length).round();
 
     final breakdown = [
-      ['used', (mem.usagePercent / 100.0).clamp(0.0, 1.0), AxColors.accent],
-      ['available', (1.0 - mem.usagePercent / 100.0).clamp(0.0, 1.0), AxColors.info],
+      ['used', (mem.usagePercent / 100.0).clamp(0.0, 1.0), AxColors.accent, '${mem.usedGb.toStringAsFixed(1)} GB'],
+      ['available', (1.0 - mem.usagePercent / 100.0).clamp(0.0, 1.0), AxColors.info, '${mem.availableGb.toStringAsFixed(1)} GB'],
     ];
 
     return (
@@ -307,7 +309,7 @@ class _ChartCard extends StatelessWidget {
         const [.1, .2, .15, .3, .25, .42],
         const [['MIN', '2 MB/s'], ['AVG', '18 MB/s'], ['MAX', '42 MB/s']],
         const [
-          ['/', 0.45, AxColors.accent],
+          ['/', 0.45, AxColors.accent, '298 GB free'],
         ],
       );
     }
@@ -318,7 +320,12 @@ class _ChartCard extends StatelessWidget {
 
     final breakdown = disk.mounts.map((m) {
       final r = (m.usagePercent / 100.0).clamp(0.0, 1.0);
-      return [m.mountPoint, r, r > 0.85 ? AxColors.bad : AxColors.accent];
+      return [
+        m.mountPoint,
+        r,
+        r > 0.85 ? AxColors.bad : AxColors.accent,
+        '${m.freeGb.toStringAsFixed(0)} GB free · ${m.usedGb.toStringAsFixed(0)} GB used',
+      ];
     }).toList();
 
     return (
@@ -326,8 +333,13 @@ class _ChartCard extends StatelessWidget {
       disk.totalMbPerSec.toStringAsFixed(1),
       'MB/s',
       hist,
-      [['READ', '${disk.readMbPerSec.toStringAsFixed(1)} M/s'], ['WRITE', '${disk.writeMbPerSec.toStringAsFixed(1)} M/s'], ['USED', '${disk.usagePercent.round()}%']],
-      breakdown.isEmpty ? [['/', 0.42, AxColors.accent]] : breakdown,
+      [
+        ['USED', '${disk.usedGb.toStringAsFixed(0)} GB (${disk.usagePercent.round()}%)'],
+        ['FREE', '${disk.freeGb.toStringAsFixed(0)} GB'],
+        ['READ', '${disk.readMbPerSec.toStringAsFixed(1)} M/s'],
+        ['WRITE', '${disk.writeMbPerSec.toStringAsFixed(1)} M/s'],
+      ],
+      breakdown.isEmpty ? [['/', 0.42, AxColors.accent, '298 GB free']] : breakdown,
     );
   }
 
