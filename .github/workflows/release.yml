@@ -27,15 +27,18 @@ permissions:
   contents: write
 
 jobs:
-  # Resolves the tag suffix into per-target flags once so every build job
-  # below has a single simple `if:` condition instead of repeating the
-  # suffix check everywhere.
+  # Resolves the tag suffix into per-target flags, and generates the
+  # version manifest every build job publishes alongside its own
+  # artifacts (see update_check_service.dart, which is what actually
+  # reads this back from GitHub in the app).
   plan:
     runs-on: ubuntu-latest
     outputs:
       backend: ${{ steps.resolve.outputs.backend }}
       frontend: ${{ steps.resolve.outputs.frontend }}
     steps:
+      - uses: actions/checkout@v4
+
       - id: resolve
         run: |
           tag="${{ github.ref_name }}"
@@ -53,6 +56,101 @@ jobs:
               echo "frontend=true" >> "$GITHUB_OUTPUT"
               ;;
           esac
+
+      # Builds version-manifest.json, the single artifact every build job
+      # (whichever run) uploads to this release. Its three fields are
+      # what the app compares itself against (UpdateCheckService) to
+      # decide whether Archangel/App/Backend show an "update available"
+      # badge - so a partial (-b/-f) release must freeze the two
+      # components it isn't touching at their PREVIOUS release's values,
+      # not at whatever the working tree's VERSION file currently says
+      # (which may be ahead, e.g. bumped in prep for the next release).
+      - id: versions
+        run: |
+          set -euo pipefail
+
+          tag="${{ github.ref_name }}"
+          suffix=""
+          case "$tag" in
+            *-b) suffix="-b" ;;
+            *-f) suffix="-f" ;;
+          esac
+
+          cur_archangel=$(awk '/^ARCHANGEL/ {print $2}' VERSION)
+          cur_frontend=$(awk '/^FRONTEND/ {print $2}' VERSION)
+          cur_backend=$(awk '/^BACKEND/ {print $2}' VERSION)
+
+          # Fetch the previous release's manifest (if any) - the source
+          # of truth for whichever fields this tag isn't updating.
+          prev_archangel=""
+          prev_frontend=""
+          prev_backend=""
+          http_code=$(curl -sS -o /tmp/prev_release.json -w "%{http_code}" \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/latest") || http_code="000"
+          if [ "$http_code" = "200" ]; then
+            manifest_url=$(jq -r '.assets[]? | select(.name=="version-manifest.json") | .browser_download_url' /tmp/prev_release.json)
+            if [ -n "$manifest_url" ] && [ "$manifest_url" != "null" ]; then
+              curl -sSL -o /tmp/prev_manifest.json "$manifest_url"
+              prev_archangel=$(jq -r '.archangel' /tmp/prev_manifest.json)
+              prev_frontend=$(jq -r '.frontend' /tmp/prev_manifest.json)
+              prev_backend=$(jq -r '.backend' /tmp/prev_manifest.json)
+            fi
+          fi
+
+          if [ -z "$prev_archangel" ] && [ -n "$suffix" ]; then
+            echo "::error::No previous release with a version-manifest.json was found. The first-ever release must be a clean tag (no -b/-f suffix) so later partial releases have a baseline to freeze the other two components at." >&2
+            exit 1
+          fi
+
+          case "$suffix" in
+            "-b")
+              new_archangel="$prev_archangel"
+              new_frontend="$prev_frontend"
+              new_backend="$cur_backend"
+              if [ "$new_backend" = "$prev_backend" ]; then
+                echo "::error::VERSION's BACKEND line ($cur_backend) is unchanged from the previous release - bump it before tagging a -b release." >&2
+                exit 1
+              fi
+              ;;
+            "-f")
+              new_archangel="$prev_archangel"
+              new_frontend="$cur_frontend"
+              new_backend="$prev_backend"
+              if [ "$new_frontend" = "$prev_frontend" ]; then
+                echo "::error::VERSION's FRONTEND line ($cur_frontend) is unchanged from the previous release - bump it before tagging a -f release." >&2
+                exit 1
+              fi
+              ;;
+            *)
+              new_archangel="$cur_archangel"
+              new_frontend="$cur_frontend"
+              new_backend="$cur_backend"
+              expected_tag="v${cur_archangel}"
+              if [ "$tag" != "$expected_tag" ]; then
+                echo "::error::Clean tag $tag doesn't match VERSION's ARCHANGEL line ($cur_archangel) - expected $expected_tag." >&2
+                exit 1
+              fi
+              ;;
+          esac
+
+          published_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          jq -n \
+            --arg archangel "$new_archangel" \
+            --arg frontend "$new_frontend" \
+            --arg backend "$new_backend" \
+            --arg tag "$tag" \
+            --arg published_at "$published_at" \
+            '{archangel:$archangel, frontend:$frontend, backend:$backend, tag:$tag, published_at:$published_at}' \
+            > version-manifest.json
+          cat version-manifest.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: version-manifest
+          path: version-manifest.json
+          retention-days: 1
 
   build-macos:
     needs: plan
@@ -99,9 +197,15 @@ jobs:
         working-directory: app/frontend/build/macos/Build/Products/Release
         run: ditto -c -k --sequesterRsrc --keepParent Archangel.app Archangel-macos.zip
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: version-manifest
+
       - uses: softprops/action-gh-release@v2
         with:
-          files: app/frontend/build/macos/Build/Products/Release/Archangel-macos.zip
+          files: |
+            app/frontend/build/macos/Build/Products/Release/Archangel-macos.zip
+            version-manifest.json
           generate_release_notes: true
 
   build-windows:
@@ -150,9 +254,15 @@ jobs:
         working-directory: app/frontend/build/windows/x64/runner/Release
         run: Compress-Archive -Path * -DestinationPath ../../../../Archangel-windows.zip
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: version-manifest
+
       - uses: softprops/action-gh-release@v2
         with:
-          files: app/frontend/build/Archangel-windows.zip
+          files: |
+            app/frontend/build/Archangel-windows.zip
+            version-manifest.json
           generate_release_notes: true
 
   build-android:
@@ -205,9 +315,15 @@ jobs:
       # build, smaller APK.
       - run: flutter build apk --release --split-per-abi --target-platform android-arm64
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: version-manifest
+
       - uses: softprops/action-gh-release@v2
         with:
-          files: app/frontend/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+          files: |
+            app/frontend/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+            version-manifest.json
           generate_release_notes: true
 
   build-backend:
@@ -231,9 +347,14 @@ jobs:
       - run: make build-linux-amd64
       - run: make build-linux-arm64
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: version-manifest
+
       - uses: softprops/action-gh-release@v2
         with:
           files: |
             app/backend/bin/archangeld-amd64
             app/backend/bin/archangeld-arm64
+            version-manifest.json
           generate_release_notes: true
