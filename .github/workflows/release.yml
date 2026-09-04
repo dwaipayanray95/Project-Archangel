@@ -58,13 +58,22 @@ jobs:
           esac
 
       # Builds version-manifest.json, the single artifact every build job
-      # (whichever run) uploads to this release. Its three fields are
-      # what the app compares itself against (UpdateCheckService) to
-      # decide whether Archangel/App/Backend show an "update available"
-      # badge - so a partial (-b/-f) release must freeze the two
-      # components it isn't touching at their PREVIOUS release's values,
-      # not at whatever the working tree's VERSION file currently says
-      # (which may be ahead, e.g. bumped in prep for the next release).
+      # (whichever run) uploads to this release. Its fields are what the
+      # app compares itself against (UpdateCheckService) to decide
+      # whether Archangel/App/Backend show an "update available" badge -
+      # so a partial (-b/-f) release must freeze the two fields it isn't
+      # touching at their PREVIOUS release's values, not at whatever the
+      # working tree's VERSION file currently says (which may be ahead,
+      # e.g. bumped in prep for the next release).
+      #
+      # backend_tag/frontend_tag track which release's assets actually
+      # carry that component's binary - needed because the "backend"/
+      # "frontend" version numbers can be frozen (unchanged) across
+      # several releases in a row, so the binary itself may live on an
+      # OLDER release than the latest one, not on whatever
+      # releases/latest resolves to (a BackendUpdateService download
+      # against "latest" would silently 404 on a -f-only release with
+      # no archangeld binaries attached at all).
       - id: versions
         run: |
           set -euo pipefail
@@ -85,6 +94,8 @@ jobs:
           prev_archangel=""
           prev_frontend=""
           prev_backend=""
+          prev_frontend_tag=""
+          prev_backend_tag=""
           http_code=$(curl -sS -o /tmp/prev_release.json -w "%{http_code}" \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             -H "Accept: application/vnd.github+json" \
@@ -96,6 +107,8 @@ jobs:
               prev_archangel=$(jq -r '.archangel' /tmp/prev_manifest.json)
               prev_frontend=$(jq -r '.frontend' /tmp/prev_manifest.json)
               prev_backend=$(jq -r '.backend' /tmp/prev_manifest.json)
+              prev_frontend_tag=$(jq -r '.frontend_tag' /tmp/prev_manifest.json)
+              prev_backend_tag=$(jq -r '.backend_tag' /tmp/prev_manifest.json)
             fi
           fi
 
@@ -109,6 +122,8 @@ jobs:
               new_archangel="$prev_archangel"
               new_frontend="$prev_frontend"
               new_backend="$cur_backend"
+              new_frontend_tag="$prev_frontend_tag"
+              new_backend_tag="$tag"
               if [ "$new_backend" = "$prev_backend" ]; then
                 echo "::error::VERSION's BACKEND line ($cur_backend) is unchanged from the previous release - bump it before tagging a -b release." >&2
                 exit 1
@@ -118,6 +133,8 @@ jobs:
               new_archangel="$prev_archangel"
               new_frontend="$cur_frontend"
               new_backend="$prev_backend"
+              new_frontend_tag="$tag"
+              new_backend_tag="$prev_backend_tag"
               if [ "$new_frontend" = "$prev_frontend" ]; then
                 echo "::error::VERSION's FRONTEND line ($cur_frontend) is unchanged from the previous release - bump it before tagging a -f release." >&2
                 exit 1
@@ -127,6 +144,8 @@ jobs:
               new_archangel="$cur_archangel"
               new_frontend="$cur_frontend"
               new_backend="$cur_backend"
+              new_frontend_tag="$tag"
+              new_backend_tag="$tag"
               expected_tag="v${cur_archangel}"
               if [ "$tag" != "$expected_tag" ]; then
                 echo "::error::Clean tag $tag doesn't match VERSION's ARCHANGEL line ($cur_archangel) - expected $expected_tag." >&2
@@ -140,9 +159,11 @@ jobs:
             --arg archangel "$new_archangel" \
             --arg frontend "$new_frontend" \
             --arg backend "$new_backend" \
+            --arg frontend_tag "$new_frontend_tag" \
+            --arg backend_tag "$new_backend_tag" \
             --arg tag "$tag" \
             --arg published_at "$published_at" \
-            '{archangel:$archangel, frontend:$frontend, backend:$backend, tag:$tag, published_at:$published_at}' \
+            '{archangel:$archangel, frontend:$frontend, backend:$backend, frontend_tag:$frontend_tag, backend_tag:$backend_tag, tag:$tag, published_at:$published_at}' \
             > version-manifest.json
           cat version-manifest.json
 

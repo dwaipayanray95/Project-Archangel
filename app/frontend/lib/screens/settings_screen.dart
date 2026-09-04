@@ -9,6 +9,7 @@ import '../services/update_check_service.dart';
 import '../services/wireguard_controller.dart';
 import '../theme/tokens.dart';
 import '../widgets/ax_widgets.dart';
+import '../widgets/backend_update_dialog.dart';
 import '../widgets/pairing_dialog.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -36,11 +37,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final backendVer = backend.isPaired
         ? (backend.backendVersion != null ? 'v${backend.backendVersion}' : 'checking…')
         : 'not paired';
-    final aboutRows = [
-      ['Archangel version', 'v${AppVersion.archangel}', updates.latestArchangel, AppVersion.archangel],
-      ['App version', 'v$ver', updates.latestFrontend, ver],
-      ['Backend version', backendVer, backend.isPaired ? updates.latestBackend : null, backend.backendVersion],
-    ];
     final plainRows = [
       ['Host', 'Archangel-MK1'],
       ['Paired devices', '1'],
@@ -163,8 +159,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           ],
                         ),
                         const SizedBox(height: 10),
-                        for (final r in aboutRows)
-                          _KvRow(r[0]!, r[1]!, divider: false, updateAvailable: (r[2] != null && r[3] != null && r[2] != r[3]) ? r[2] : null),
+                        _KvRow(
+                          'Archangel version',
+                          'v${AppVersion.archangel}',
+                          divider: false,
+                          updateAvailable: updates.latestArchangel != null && updates.latestArchangel != AppVersion.archangel ? updates.latestArchangel : null,
+                        ),
+                        _KvRow(
+                          'App version',
+                          'v$ver',
+                          divider: false,
+                          updateAvailable: updates.latestFrontend != null && updates.latestFrontend != ver ? updates.latestFrontend : null,
+                        ),
+                        _KvRow(
+                          'Backend version',
+                          backendVer,
+                          divider: false,
+                          updateAvailable: backend.isPaired && updates.latestBackend != null && updates.latestBackend != backend.backendVersion
+                              ? updates.latestBackend
+                              : null,
+                          onUpdateTap: (backend.isPaired && updates.latestBackend != null && updates.backendTag != null)
+                              ? () => showBackendUpdateDialog(context, targetVersion: updates.latestBackend!, releaseTag: updates.backendTag!)
+                              : null,
+                        ),
                         for (final r in plainRows) _KvRow(r[0], r[1], divider: false),
                       ],
                     ),
@@ -198,7 +215,13 @@ class _KvRow extends StatelessWidget {
   /// or when there's no update info to compare against yet.
   final String? updateAvailable;
 
-  const _KvRow(this.k, this.v, {this.divider = true, this.updateAvailable});
+  /// If set, tapping the badge calls this instead of opening the GitHub
+  /// release page - used for the Backend row, whose "update" is
+  /// something this app can actually do (see BackendUpdateDialog),
+  /// unlike the Archangel/App rows which are just informational.
+  final VoidCallback? onUpdateTap;
+
+  const _KvRow(this.k, this.v, {this.divider = true, this.updateAvailable, this.onUpdateTap});
 
   @override
   Widget build(BuildContext context) {
@@ -209,7 +232,7 @@ class _KvRow extends StatelessWidget {
         children: [
           SizedBox(width: 132, child: Text(k, style: AxTextStyles.sans.copyWith(fontSize: 11, color: AxColors.fg3))),
           Expanded(child: Text(v, style: AxTextStyles.mono.copyWith(fontSize: 11.5), overflow: TextOverflow.ellipsis)),
-          if (updateAvailable != null) _UpdateBadge(newerVersion: updateAvailable!),
+          if (updateAvailable != null) _UpdateBadge(newerVersion: updateAvailable!, onTap: onUpdateTap, actionLabel: onUpdateTap != null ? 'update' : null),
         ],
       ),
     );
@@ -218,20 +241,24 @@ class _KvRow extends StatelessWidget {
 
 class _UpdateBadge extends StatelessWidget {
   final String newerVersion;
-  const _UpdateBadge({required this.newerVersion});
+  final VoidCallback? onTap;
+  final String? actionLabel;
+  const _UpdateBadge({required this.newerVersion, this.onTap, this.actionLabel});
 
   @override
   Widget build(BuildContext context) {
     final releaseUrl = context.watch<UpdateCheckService>().releaseUrl;
+    final tapHandler = onTap ?? (releaseUrl == null ? null : () => launchUrl(Uri.parse(releaseUrl), mode: LaunchMode.externalApplication));
     return GestureDetector(
-      onTap: releaseUrl == null
-          ? null
-          : () => launchUrl(Uri.parse(releaseUrl), mode: LaunchMode.externalApplication),
+      onTap: tapHandler,
       child: Container(
         margin: const EdgeInsets.only(left: 6),
         padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
         decoration: BoxDecoration(color: AxColors.warn.withValues(alpha: 0.16), borderRadius: BorderRadius.circular(AxRadius.pill)),
-        child: Text('v$newerVersion available', style: AxTextStyles.mono.copyWith(fontSize: 9.5, fontWeight: FontWeight.w600, color: AxColors.warn)),
+        child: Text(
+          actionLabel != null ? 'v$newerVersion - $actionLabel' : 'v$newerVersion available',
+          style: AxTextStyles.mono.copyWith(fontSize: 9.5, fontWeight: FontWeight.w600, color: AxColors.warn),
+        ),
       ),
     );
   }

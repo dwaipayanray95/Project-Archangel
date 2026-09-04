@@ -307,6 +307,103 @@ bash $_remoteScriptDir/ensure_boot_fw_fixup.sh ${config.appPort} tcp
     }
   }
 
+  /// Updates an already-running archangeld to [targetVersion], downloading
+  /// the binary from the specific release tagged [releaseTag] - NOT
+  /// "latest": a -b/-f release's other component may not have its
+  /// binary attached to whatever release GitHub currently calls
+  /// "latest" at all (see UpdateCheckService.backendTag's doc comment).
+  ///
+  /// Keeps the previous binary as `archangeld.bak` and, if the new one
+  /// doesn't come up correctly, automatically restores it. "Came up
+  /// correctly" is checked via [fetchLiveVersion] - a caller-supplied
+  /// poll of the app's own authenticated /health endpoint - rather than
+  /// just trusting `systemctl is-active`, since a process can be
+  /// "active" (running) while still serving the wrong version or about
+  /// to crash-loop moments later.
+  Stream<SetupProgress> updateBackend({
+    required String targetVersion,
+    required String releaseTag,
+    required String githubRepoSlug,
+    required Future<String?> Function() fetchLiveVersion,
+    Duration pollInterval = const Duration(seconds: 2),
+  }) async* {
+    yield const SetupProgress('detect', 'Checking server architecture...');
+    final arch = await _detectArch();
+    yield SetupProgress('detect', 'Detected architecture: $arch', stageComplete: true);
+
+    yield const SetupProgress('backup', 'Backing up the current binary...');
+    final backupResult = await _exec('sudo cp -f /opt/archangel/archangeld /opt/archangel/archangeld.bak');
+    if (!backupResult.ok) {
+      throw VpsSetupException('backup', 'Could not back up the current binary: ${backupResult.stderr}');
+    }
+    yield const SetupProgress('backup', 'Backup created.', stageComplete: true);
+
+    yield SetupProgress('download', 'Downloading archangeld v$targetVersion...');
+    final url = 'https://github.com/$githubRepoSlug/releases/download/$releaseTag/archangeld-$arch';
+    // Downloaded to a temp path and version-checked BEFORE it's moved
+    // into /opt/archangel/archangeld, so a bad/corrupt download never
+    // overwrites the last-known-good binary in the first place - the
+    // backup above is the second line of defense (a restart-time
+    // failure the version check itself can't catch, e.g. the binary
+    // runs fine standalone but crashes under real config/load).
+    final downloadScript = '''
+set -e
+sudo curl -fsSL "$url" -o /tmp/archangeld-new
+sudo chmod 755 /tmp/archangeld-new
+sudo chown root:root /tmp/archangeld-new
+NEW_VERSION=\$(/tmp/archangeld-new version 2>/dev/null | awk '{print \$2}' | sed 's/^v//')
+if [ "\$NEW_VERSION" != "$targetVersion" ]; then
+  echo "downloaded binary reports version '\$NEW_VERSION', expected $targetVersion" >&2
+  exit 1
+fi
+sudo mv /tmp/archangeld-new /opt/archangel/archangeld
+''';
+    final downloadResult = await _exec(downloadScript);
+    if (!downloadResult.ok) {
+      throw VpsSetupException(
+        'download',
+        'Failed to download/verify archangeld v$targetVersion (checked $url) - exit ${downloadResult.exitCode}: ${downloadResult.stderr}',
+      );
+    }
+    yield const SetupProgress('download', 'Downloaded and verified.', stageComplete: true);
+
+    yield const SetupProgress('restart', 'Restarting the archangel service...');
+    final restartResult = await _exec('sudo systemctl restart archangel');
+    if (!restartResult.ok) {
+      await _rollbackBinary();
+      throw VpsSetupException(
+        'restart',
+        'Failed to restart the service after updating - rolled back to the previous binary: ${restartResult.stderr}',
+      );
+    }
+
+    String? liveVersion;
+    for (var attempt = 0; attempt < 10; attempt++) {
+      await Future.delayed(pollInterval);
+      liveVersion = await fetchLiveVersion();
+      if (liveVersion == targetVersion) break;
+    }
+
+    if (liveVersion != targetVersion) {
+      yield SetupProgress(
+        'restart',
+        'New version did not come up correctly (saw "${liveVersion ?? 'no response'}") - rolling back...',
+      );
+      await _rollbackBinary();
+      throw VpsSetupException(
+        'restart',
+        'archangeld v$targetVersion failed its post-update health check (reported "${liveVersion ?? 'nothing'}") '
+            '- rolled back to the previous binary and restarted it.',
+      );
+    }
+
+    yield SetupProgress('restart', 'archangeld v$targetVersion is running.', stageComplete: true);
+  }
+
+  Future<void> _rollbackBinary() async {
+    await _exec('sudo mv -f /opt/archangel/archangeld.bak /opt/archangel/archangeld && sudo systemctl restart archangel');
+  }
+
   Future<SshExecResult> _exec(String command) => _ssh.exec(command);
 }
 

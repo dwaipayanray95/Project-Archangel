@@ -1,22 +1,18 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:provider/provider.dart';
 
 import '../../services/archangeld_connection.dart';
 import '../../services/local_auth_service.dart';
 import '../../services/pairing_bundle.dart';
+import '../../services/ssh_credentials.dart';
 import '../../services/ssh_transport.dart';
 import '../../services/vps_setup_service.dart';
 import '../../services/wireguard_controller.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/ax_widgets.dart';
-
-const _kSshHostKey = 'vps_setup_ssh_host';
-const _kSshUsernameKey = 'vps_setup_ssh_username';
-const _kSshPrivateKeyKey = 'vps_setup_ssh_private_key';
-const _secureStorage = FlutterSecureStorage();
+import '../../widgets/host_key_dialog.dart';
 
 /// The in-app "zero-SSH-by-hand" first-run wizard: connect → progress →
 /// done. See lib/services/vps_setup_service.dart for what actually runs
@@ -78,8 +74,7 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
   }
 
   Future<void> _restoreSavedKey() async {
-    final hasSavedKey = await _secureStorage.containsKey(key: _kSshPrivateKeyKey);
-    if (!hasSavedKey) return;
+    if (!await hasSavedSshCredentials()) return;
 
     // Gate reading the actual key value behind an OS-level re-auth
     // prompt - it grants root on the VPS, so a device left unlocked
@@ -90,14 +85,12 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
     final authorized = await LocalAuthService().authenticate('Unlock your saved SSH key');
     if (!mounted || !authorized) return;
 
-    final host = await _secureStorage.read(key: _kSshHostKey);
-    final username = await _secureStorage.read(key: _kSshUsernameKey);
-    final key = await _secureStorage.read(key: _kSshPrivateKeyKey);
-    if (!mounted || key == null) return;
+    final creds = await loadSavedSshCredentials();
+    if (!mounted || creds == null) return;
     setState(() {
-      _hostController.text = host ?? '';
-      _usernameController.text = username ?? 'ubuntu';
-      _privateKeyController.text = key;
+      _hostController.text = creds.host;
+      _usernameController.text = creds.username;
+      _privateKeyController.text = creds.privateKeyPem;
       _rememberKey = true;
     });
   }
@@ -145,13 +138,9 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
       );
 
       if (_rememberKey) {
-        await _secureStorage.write(key: _kSshHostKey, value: host);
-        await _secureStorage.write(key: _kSshUsernameKey, value: username);
-        await _secureStorage.write(key: _kSshPrivateKeyKey, value: privateKey);
+        await saveSshCredentials(SavedSshCredentials(host: host, username: username, privateKeyPem: privateKey));
       } else {
-        await _secureStorage.delete(key: _kSshHostKey);
-        await _secureStorage.delete(key: _kSshUsernameKey);
-        await _secureStorage.delete(key: _kSshPrivateKeyKey);
+        await clearSavedSshCredentials();
       }
 
       if (!mounted) return;
@@ -181,63 +170,7 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
     required bool isMismatch,
   }) async {
     if (!mounted) return false;
-    final accepted = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        backgroundColor: AxColors.s2,
-        title: Text(
-          isMismatch ? 'Server key changed!' : 'Verify server identity',
-          style: AxTextStyles.sans.copyWith(
-            fontSize: 15,
-            fontWeight: FontWeight.w700,
-            color: isMismatch ? AxColors.bad : null,
-          ),
-        ),
-        content: SizedBox(
-          width: 420,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (isMismatch)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: Text(
-                    'This host previously presented a different key. This could mean the '
-                    'server was rebuilt - or that something is intercepting this connection. '
-                    'Only continue if you\'re certain.',
-                    style: AxTextStyles.sans.copyWith(fontSize: 12.5, color: AxColors.bad, height: 1.5),
-                  ),
-                )
-              else
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: Text(
-                    'First connection to $host - verify this fingerprint matches what your '
-                    'cloud provider shows for this server before continuing.',
-                    style: AxTextStyles.sans.copyWith(fontSize: 12.5, color: AxColors.fg2, height: 1.5),
-                  ),
-                ),
-              Text('$keyType key fingerprint', style: AxTextStyles.sans.copyWith(fontSize: 11, color: AxColors.fg3)),
-              const SizedBox(height: 4),
-              SelectableText(fingerprint, style: AxTextStyles.mono.copyWith(fontSize: 12.5)),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: Text(
-              isMismatch ? 'Trust anyway' : 'Trust this server',
-              style: TextStyle(color: isMismatch ? AxColors.bad : null),
-            ),
-          ),
-        ],
-      ),
-    );
-    return accepted ?? false;
+    return showHostKeyConfirmDialog(context, host: host, keyType: keyType, fingerprint: fingerprint, isMismatch: isMismatch);
   }
 
   void _runSetup() {
