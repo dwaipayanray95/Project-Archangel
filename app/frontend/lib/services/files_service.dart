@@ -10,8 +10,30 @@ class FilesService extends ChangeNotifier {
   // backend maps an empty path query param to that root itself (see
   // ListHandler). A hardcoded path like '/var/log' would 403 on first
   // load for anyone whose files_root doesn't happen to contain it.
+  //
+  // Only ever set to a path that has actually been LOADED successfully
+  // (200, cache hit, or mock fallback) - never to a path a request is
+  // merely attempting. A failed load leaves this at the last place the
+  // user was actually standing, so breadcrumbs/sidebar selection don't
+  // relabel a rejected destination as "current" - see loadDirectory.
   String _currentPath = '';
   String get currentPath => _currentPath;
+
+  // The server's configured files_root, as reported by the listing
+  // response the first time the root itself (path == '') is loaded
+  // successfully - the frontend has no other way to know this string.
+  // Used to label the sidebar's root entry with the real jail boundary
+  // instead of a generic "Root".
+  String? _rootPath;
+  String? get rootPath => _rootPath;
+
+  // Top-level subdirectories of whatever's currently listed - shown as
+  // sidebar shortcuts. Derived straight from the current listing (never
+  // a separately-tracked/stale list) so it can never point outside
+  // files_root: it's built from entries the server itself just
+  // returned for a path that was actually allowed.
+  List<FileEntryModel> get quickJumpDirs =>
+      (_listing?.entries ?? const []).where((e) => e.isDir).take(8).toList();
 
   bool _showHidden = false;
   bool get showHidden => _showHidden;
@@ -50,22 +72,26 @@ class FilesService extends ChangeNotifier {
   }
 
   Future<void> loadDirectory(String path, {bool forceRefresh = false}) async {
-    _currentPath = path;
-
-    // Instant UI render from cache if available
+    // Instant UI render from cache if available - a cache hit is a
+    // successful load (of a path we've already been to), so it does
+    // commit _currentPath.
     if (!forceRefresh && _dirCache.containsKey(path)) {
+      _currentPath = path;
       _listing = _dirCache[path];
       _error = null;
       notifyListeners();
-    } else {
-      _loading = true;
-      _error = null;
-      notifyListeners();
+      return;
     }
+
+    _loading = true;
+    _error = null;
+    notifyListeners();
 
     final backend = _backend;
     if (backend == null || !backend.isPaired || backend.token == null) {
+      _currentPath = path;
       _loadMockDirectory(path);
+      notifyListeners();
       return;
     }
 
@@ -78,21 +104,29 @@ class FilesService extends ChangeNotifier {
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body) as Map<String, dynamic>;
         final newListing = DirectoryListingModel.fromJson(data);
+        _currentPath = path;
         _listing = newListing;
         _dirCache[path] = newListing;
         _error = null;
+        if (path.isEmpty) _rootPath = newListing.path;
       } else if (res.statusCode == 403) {
+        // A rejected destination is never "where we are" - leave
+        // _currentPath (and therefore breadcrumbs/sidebar selection)
+        // at the last successfully loaded directory. _error alone
+        // carries this failure to the content pane.
         final data = jsonDecode(res.body) as Map<String, dynamic>;
-        _listing = DirectoryListingModel.fromJson(data);
-        _error = _listing?.error ?? 'Permission denied';
+        final failedListing = DirectoryListingModel.fromJson(data);
+        _error = failedListing.error ?? 'Permission denied';
       } else {
         if (!_dirCache.containsKey(path)) {
+          _currentPath = path;
           _loadMockDirectory(path);
         }
       }
     } catch (e) {
       debugPrint('Error listing directory $path: $e');
       if (!_dirCache.containsKey(path)) {
+        _currentPath = path;
         _loadMockDirectory(path);
       }
     } finally {
@@ -100,8 +134,6 @@ class FilesService extends ChangeNotifier {
       notifyListeners();
     }
   }
-
-
 
   void _loadMockDirectory(String path) {
     final mockEntries = dirs[path];
@@ -133,6 +165,7 @@ class FilesService extends ChangeNotifier {
         readable: true,
       );
     }
+    if (path.isEmpty) _rootPath ??= '/';
     _loading = false;
   }
 
