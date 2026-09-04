@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../data/app_state.dart';
+import '../services/monitoring_service.dart';
 import '../theme/tokens.dart';
 import '../screens/overview_screen.dart';
 import '../screens/monitoring_screen.dart';
@@ -28,6 +29,17 @@ class AppShell extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final app = context.watch<AppState>();
+
+    // Dynamically adjust metrics polling rate:
+    // High frequency (1000ms) when user is in the Monitoring cockpit,
+    // Low frequency (5000ms) when navigating other sections to save bandwidth and CPU.
+    final mon = context.read<MonitoringService>();
+    final targetRate = app.section == AxSection.monitoring ? 1000 : 5000;
+    if (mon.pollingRateMs != targetRate) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        mon.setPollingRateMs(targetRate);
+      });
+    }
 
     return LayoutBuilder(
       builder: (context, constraints) {

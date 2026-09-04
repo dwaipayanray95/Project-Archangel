@@ -279,3 +279,44 @@ class AxMeter extends StatelessWidget {
     );
   }
 }
+
+/// Multi-segment progress meter (used for unified memory and disk breakdown).
+class AxSegmentMeter extends StatelessWidget {
+  final List<(double, Color)> segments; // ratio (0..1), color
+  final double height;
+
+  const AxSegmentMeter({super.key, required this.segments, this.height = 6});
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(AxRadius.pill),
+      child: Container(
+        height: height,
+        color: AxColors.s3,
+        child: Row(
+          children: [
+            for (final s in segments)
+              if (s.$1 > 0.001)
+                Flexible(
+                  flex: (s.$1 * 1000).round(),
+                  child: Container(color: s.$2),
+                ),
+            // Remaining unallocated
+            () {
+              final total = segments.fold(0.0, (acc, e) => acc + e.$1);
+              final remaining = (1.0 - total).clamp(0.0, 1.0);
+              if (remaining > 0.001) {
+                return Flexible(
+                  flex: (remaining * 1000).round(),
+                  child: Container(color: AxColors.s3),
+                );
+              }
+              return const SizedBox.shrink();
+            }(),
+          ],
+        ),
+      ),
+    );
+  }
+}

@@ -28,16 +28,22 @@ type MemoryMetrics struct {
 	TotalBytes     uint64    `json:"total_bytes"`
 	UsedBytes      uint64    `json:"used_bytes"`
 	AvailableBytes uint64    `json:"available_bytes"`
+	FreeBytes      uint64    `json:"free_bytes"`
+	BuffersBytes   uint64    `json:"buffers_bytes"`
+	CachedBytes    uint64    `json:"cached_bytes"`
+	SwapTotalBytes uint64    `json:"swap_total_bytes"`
+	SwapUsedBytes  uint64    `json:"swap_used_bytes"`
 	UsagePercent   float64   `json:"usage_percent"`
 	History        []float64 `json:"history"`
 }
 
 type MountMetric struct {
-	MountPoint string `json:"mount_point"`
-	Device     string `json:"device"`
-	TotalBytes uint64 `json:"total_bytes"`
-	UsedBytes  uint64 `json:"used_bytes"`
-	FreeBytes  uint64 `json:"free_bytes"`
+	MountPoint     string `json:"mount_point"`
+	Device         string `json:"device"`
+	TotalBytes     uint64 `json:"total_bytes"`
+	UsedBytes      uint64 `json:"used_bytes"`
+	FreeBytes      uint64 `json:"free_bytes"`
+	AvailableBytes uint64 `json:"available_bytes"`
 }
 
 type DiskMetrics struct {
@@ -46,6 +52,7 @@ type DiskMetrics struct {
 	TotalBytes       uint64        `json:"total_bytes"`
 	UsedBytes        uint64        `json:"used_bytes"`
 	FreeBytes        uint64        `json:"free_bytes"`
+	AvailableBytes   uint64        `json:"available_bytes"`
 	UsagePercent     float64       `json:"usage_percent"`
 	Mounts           []MountMetric `json:"mounts"`
 	History          []float64     `json:"history"`
@@ -373,10 +380,17 @@ func (c *Collector) collectMemory() MemoryMetrics {
 	// Fallback
 	var total uint64 = 16 * 1024 * 1024 * 1024
 	var used uint64 = 6 * 1024 * 1024 * 1024
+	var free uint64 = 4 * 1024 * 1024 * 1024
+	var cached uint64 = 6 * 1024 * 1024 * 1024
 	return MemoryMetrics{
 		TotalBytes:     total,
 		UsedBytes:      used,
 		AvailableBytes: total - used,
+		FreeBytes:      free,
+		BuffersBytes:   512 * 1024 * 1024,
+		CachedBytes:    cached,
+		SwapTotalBytes: 4 * 1024 * 1024 * 1024,
+		SwapUsedBytes:  512 * 1024 * 1024,
 		UsagePercent:   37.5,
 	}
 }
@@ -389,7 +403,7 @@ func (c *Collector) collectLinuxMemory() MemoryMetrics {
 	defer f.Close()
 
 	scanner := bufio.NewScanner(f)
-	var total, avail, free, buffers, cached uint64
+	var total, avail, free, buffers, cached, sreclaimable, swapTotal, swapFree uint64
 	for scanner.Scan() {
 		line := scanner.Text()
 		parts := strings.Split(line, ":")
@@ -415,11 +429,18 @@ func (c *Collector) collectLinuxMemory() MemoryMetrics {
 			buffers = bytesVal
 		case "Cached":
 			cached = bytesVal
+		case "SReclaimable":
+			sreclaimable = bytesVal
+		case "SwapTotal":
+			swapTotal = bytesVal
+		case "SwapFree":
+			swapFree = bytesVal
 		}
 	}
 
+	totalCached := cached + sreclaimable
 	if avail == 0 {
-		avail = free + buffers + cached
+		avail = free + buffers + totalCached
 	}
 	used := total - avail
 	var pct float64
@@ -427,31 +448,43 @@ func (c *Collector) collectLinuxMemory() MemoryMetrics {
 		pct = (float64(used) / float64(total)) * 100.0
 	}
 
+	var swapUsed uint64
+	if swapTotal > swapFree {
+		swapUsed = swapTotal - swapFree
+	}
+
 	return MemoryMetrics{
 		TotalBytes:     total,
 		UsedBytes:      used,
 		AvailableBytes: avail,
+		FreeBytes:      free,
+		BuffersBytes:   buffers,
+		CachedBytes:    totalCached,
+		SwapTotalBytes: swapTotal,
+		SwapUsedBytes:  swapUsed,
 		UsagePercent:   round(pct),
 	}
 }
 
 func (c *Collector) collectDisk(elapsed float64) DiskMetrics {
-	var total, used, free uint64 = 512 * 1024 * 1024 * 1024, 214 * 1024 * 1024 * 1024, 298 * 1024 * 1024 * 1024
+	var total, used, free, avail uint64 = 512 * 1024 * 1024 * 1024, 214 * 1024 * 1024 * 1024, 298 * 1024 * 1024 * 1024, 280 * 1024 * 1024 * 1024
 	mountPoint := "/"
 
-	if t, f, u, err := getDiskSpace("/"); err == nil && t > 0 {
+	if t, f, a, u, err := getDiskSpace("/"); err == nil && t > 0 {
 		total = t
 		free = f
+		avail = a
 		used = u
 	}
 
 	mounts := []MountMetric{
 		{
-			MountPoint: mountPoint,
-			Device:     "/dev/root",
-			TotalBytes: total,
-			UsedBytes:  used,
-			FreeBytes:  free,
+			MountPoint:     mountPoint,
+			Device:         "/dev/root",
+			TotalBytes:     total,
+			UsedBytes:      used,
+			FreeBytes:      free,
+			AvailableBytes: avail,
 		},
 	}
 
@@ -497,6 +530,7 @@ func (c *Collector) collectDisk(elapsed float64) DiskMetrics {
 		TotalBytes:       total,
 		UsedBytes:        used,
 		FreeBytes:        free,
+		AvailableBytes:   avail,
 		UsagePercent:     round(pct),
 		Mounts:           mounts,
 	}

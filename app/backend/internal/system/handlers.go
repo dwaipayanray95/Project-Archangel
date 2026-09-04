@@ -112,6 +112,12 @@ func ProcessReniceHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // StatsWsHandler handles GET /ws/stats for live streaming metrics
+type clientWsControl struct {
+	Action     string `json:"action"`      // "set_rate"
+	IntervalMs int    `json:"interval_ms"` // e.g. 500, 1000, 5000
+}
+
+// StatsWsHandler handles GET /ws/stats for live streaming metrics
 func StatsWsHandler(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -126,16 +132,30 @@ func StatsWsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ticker := time.NewTicker(2 * time.Second)
+	interval := 2 * time.Second
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	// Read loop to detect client disconnect
+	// Rate control channel
+	rateCh := make(chan time.Duration, 4)
+
+	// Read loop to detect client disconnect and control messages (e.g. dynamic rate changes)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		for {
-			if _, _, err := conn.ReadMessage(); err != nil {
+			_, msg, err := conn.ReadMessage()
+			if err != nil {
 				return
+			}
+			var ctrl clientWsControl
+			if err := json.Unmarshal(msg, &ctrl); err == nil && ctrl.Action == "set_rate" {
+				if ctrl.IntervalMs >= 250 && ctrl.IntervalMs <= 30000 {
+					select {
+					case rateCh <- time.Duration(ctrl.IntervalMs) * time.Millisecond:
+					default:
+					}
+				}
 			}
 		}
 	}()
@@ -144,6 +164,8 @@ func StatsWsHandler(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-done:
 			return
+		case newDur := <-rateCh:
+			ticker.Reset(newDur)
 		case <-ticker.C:
 			metrics := collector.Latest()
 			conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
