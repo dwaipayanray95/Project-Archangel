@@ -14,7 +14,7 @@ type FileEntry struct {
 	Mtime     string    `json:"mtime"` // Formatted date (e.g. "Sep 02 06:14")
 	Owner     string    `json:"owner,omitempty"`
 	Group     string    `json:"group,omitempty"`
-	Target    string    `json:"target,omitempty"` // Target path if symlink
+	Target    string    `json:"target,omitempty"`    // Target path if symlink
 	IsBroken  bool      `json:"is_broken,omitempty"` // True if symlink points to non-existent target
 }
 

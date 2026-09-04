@@ -33,6 +33,9 @@ func TestCleanPath(t *testing.T) {
 func TestListDirectoryAndReadFile(t *testing.T) {
 	// Create temporary directory structure
 	tmpDir := t.TempDir()
+	if err := SetRoot(tmpDir); err != nil {
+		t.Fatal(err)
+	}
 
 	subDir := filepath.Join(tmpDir, "subfolder")
 	if err := os.Mkdir(subDir, 0755); err != nil {
@@ -95,6 +98,9 @@ func TestListDirectoryAndReadFile(t *testing.T) {
 
 func TestHandlers(t *testing.T) {
 	tmpDir := t.TempDir()
+	if err := SetRoot(tmpDir); err != nil {
+		t.Fatal(err)
+	}
 	fpath := filepath.Join(tmpDir, "app.log")
 	_ = os.WriteFile(fpath, []byte("error: connection timed out\n"), 0644)
 
@@ -130,5 +136,89 @@ func TestHandlers(t *testing.T) {
 	}
 	if len(fileResp.Lines) != 1 || fileResp.Lines[0] != "error: connection timed out" {
 		t.Errorf("unexpected preview line: %v", fileResp.Lines)
+	}
+}
+
+// TestJailRejectsEscapes is the regression test for the real bug this
+// package shipped with: CleanPath alone (Clean + force-absolute) never
+// confined anything to a root, so any paired device could read/download
+// any file on the server. resolvePath (used by every list/read/download
+// entrypoint) must reject both textual escapes (../, an absolute path
+// outside root) and a symlink that lives inside root but points outside
+// it.
+func TestJailRejectsEscapes(t *testing.T) {
+	root := t.TempDir()
+	if err := SetRoot(root); err != nil {
+		t.Fatal(err)
+	}
+
+	secretDir := t.TempDir() // a sibling of root, standing in for e.g. /etc
+	secretFile := filepath.Join(secretDir, "shadow")
+	if err := os.WriteFile(secretFile, []byte("root:x:0:0"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	allowedFile := filepath.Join(root, "notes.txt")
+	if err := os.WriteFile(allowedFile, []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Sanity check: a path genuinely inside root still works.
+	if _, err := resolvePath(allowedFile); err != nil {
+		t.Fatalf("resolvePath rejected an in-root path: %v", err)
+	}
+
+	// Textual escape: an absolute path to a file entirely outside root.
+	if _, err := resolvePath(secretFile); err == nil {
+		t.Fatalf("resolvePath allowed an absolute path outside root: %s", secretFile)
+	}
+
+	// Textual escape via ../.
+	traversal := filepath.Join(root, "..", filepath.Base(secretDir), "shadow")
+	if _, err := resolvePath(traversal); err == nil {
+		t.Fatalf("resolvePath allowed a ../ escape: %s", traversal)
+	}
+
+	// Symlink escape: the link itself lives inside root, but its target
+	// does not - this must be rejected even though the requested path
+	// string is textually within root.
+	linkPath := filepath.Join(root, "leaked")
+	if err := os.Symlink(secretFile, linkPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolvePath(linkPath); err == nil {
+		t.Fatalf("resolvePath allowed a symlink escaping root: %s -> %s", linkPath, secretFile)
+	}
+
+	// And ListDirectory must mark that same symlink as broken/unusable
+	// rather than presenting it as a normal, followable entry.
+	listing, err := ListDirectory(root)
+	if err != nil {
+		t.Fatalf("ListDirectory failed: %v", err)
+	}
+	found := false
+	for _, e := range listing.Entries {
+		if e.Name == "leaked" {
+			found = true
+			if !e.IsBroken {
+				t.Errorf("expected the escaping symlink to be marked IsBroken, got %+v", e)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("expected to find the 'leaked' symlink in the listing")
+	}
+}
+
+// TestEmptyRootRejectsEverything is the fail-closed check: an
+// unconfigured files_root must disable the browser entirely, not
+// default to allowing everything (which is exactly the bug this jail
+// fixes).
+func TestEmptyRootRejectsEverything(t *testing.T) {
+	if err := SetRoot(""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolvePath("/etc/passwd"); err == nil {
+		t.Fatal("expected resolvePath to reject everything when root is unset")
 	}
 }

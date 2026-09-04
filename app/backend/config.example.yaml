@@ -29,5 +29,9 @@ wg_subnet: ""        # default: 10.10.0
 # dial in from outside the tunnel. Not needed just to run the server.
 public_endpoint: ""
 
-# Milestone 2: directory the file browser is jailed to.
+# Directory the Files tab is jailed to (both textually and after
+# resolving symlinks - a symlink inside this directory that points
+# outside it is treated as inaccessible). Required for the Files tab to
+# work at all: left empty, every /api/v1/files/* request is rejected
+# rather than defaulting to allowing the whole filesystem. e.g. "/home/ubuntu".
 files_root: ""

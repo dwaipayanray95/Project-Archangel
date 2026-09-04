@@ -71,7 +71,11 @@ func DownloadHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	targetPath := CleanPath(r.URL.Query().Get("path"))
+	targetPath, err := resolvePath(r.URL.Query().Get("path"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
 	info, err := os.Stat(targetPath)
 	if err != nil {
 		http.Error(w, "file not found", http.StatusNotFound)
