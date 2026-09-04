@@ -5,7 +5,9 @@
 # binary is being able to scp one file to the server with zero runtime
 # dependencies, so this isn't optional.
 
-VERSION ?= $(shell cat ../../VERSION 2>/dev/null || echo "1.1.0")
+# Root VERSION file has two lines ("BACKEND x.y.z" / "FRONTEND x.y.z") -
+# only the backend's own line matters here.
+VERSION ?= $(shell awk '/^BACKEND/ {print $$2}' ../../VERSION 2>/dev/null)
 LDFLAGS = -ldflags "-X 'github.com/dwaipayanray95/project-archangel/backend/internal/version.Version=$(VERSION)'"
 
 # AMD Micro box (Archangel-Mk1)
