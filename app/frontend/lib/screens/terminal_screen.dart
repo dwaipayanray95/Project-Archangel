@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import '../data/app_state.dart';
 import '../services/archangeld_connection.dart';
 import '../services/terminal_session.dart';
 import '../theme/tokens.dart';
@@ -27,10 +28,15 @@ class _TerminalScreenState extends State<TerminalScreen> {
     super.dispose();
   }
 
-  void _openSession(ArchangeldConnection backend) {
+  void _openSession(ArchangeldConnection backend, {String? initialDir}) {
     final session = TerminalSession(label: 'shell $_nextId');
     _nextId++;
     session.connect(backend);
+    if (initialDir != null && initialDir.isNotEmpty) {
+      Future.delayed(const Duration(milliseconds: 600), () {
+        session.sendInput('cd "$initialDir"\n');
+      });
+    }
     setState(() {
       _sessions.add(session);
       _tab = _sessions.length - 1;
@@ -50,17 +56,26 @@ class _TerminalScreenState extends State<TerminalScreen> {
   @override
   Widget build(BuildContext context) {
     final backend = context.watch<ArchangeldConnection>();
+    final app = context.watch<AppState>();
+
+    final pendingDir = app.consumePendingTerminalDir();
+    if (pendingDir != null && backend.isPaired) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_sessions.isNotEmpty) {
+          _sessions[_tab].sendInput('cd "$pendingDir"\n');
+        } else {
+          _openSession(backend, initialDir: pendingDir);
+        }
+      });
+    }
 
     if (!backend.isPaired) {
       return _UnpairedPrompt(onPaired: () => setState(() {}));
     }
 
     if (_sessions.isEmpty) {
-      // Auto-open the first tab as soon as we're paired, so Terminal
-      // "just works" the way the mockup implies rather than requiring an
-      // extra click.
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && _sessions.isEmpty) _openSession(backend);
+        if (mounted && _sessions.isEmpty) _openSession(backend, initialDir: pendingDir);
       });
       return const Center(
         child: CircularProgressIndicator(strokeWidth: 2, color: AxColors.accent),

@@ -105,4 +105,31 @@ class ArchangeldConnection extends ChangeNotifier {
     }
     return Uri.parse('http://$_host/api/v1/system/processes/$pid/renice');
   }
+
+  /// `http://<host>/api/v1/files/list?path=...`
+  Uri filesListHttpUri(String path) {
+    if (!isPaired) {
+      throw StateError('Not paired with a backend');
+    }
+    return Uri.parse('http://$_host/api/v1/files/list').replace(queryParameters: {'path': path});
+  }
+
+  /// `http://<host>/api/v1/files/read?path=...&lines=...`
+  Uri filesReadHttpUri(String path, {int lines = 300}) {
+    if (!isPaired) {
+      throw StateError('Not paired with a backend');
+    }
+    return Uri.parse('http://$_host/api/v1/files/read').replace(queryParameters: {
+      'path': path,
+      'lines': lines.toString(),
+    });
+  }
+
+  /// `http://<host>/api/v1/files/download?path=...`
+  Uri filesDownloadHttpUri(String path) {
+    if (!isPaired) {
+      throw StateError('Not paired with a backend');
+    }
+    return Uri.parse('http://$_host/api/v1/files/download').replace(queryParameters: {'path': path});
+  }
 }

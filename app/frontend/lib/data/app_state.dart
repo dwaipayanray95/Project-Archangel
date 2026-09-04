@@ -57,6 +57,19 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  String? _pendingTerminalDir;
+  String? get pendingTerminalDir => _pendingTerminalDir;
+  String? consumePendingTerminalDir() {
+    final d = _pendingTerminalDir;
+    _pendingTerminalDir = null;
+    return d;
+  }
+
+  void openTerminalInDir(String dir) {
+    _pendingTerminalDir = dir;
+    go(AxSection.terminal);
+  }
+
   void go(AxSection s) {
     section = s;
     _paletteOpen = false;
