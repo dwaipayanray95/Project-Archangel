@@ -39,6 +39,7 @@ class _UninstallDialogState extends State<UninstallDialog> {
   final _hostController = TextEditingController();
   final _usernameController = TextEditingController(text: 'ubuntu');
   final _privateKeyController = TextEditingController();
+  final _passphraseController = TextEditingController();
   bool _loadingSavedKey = true;
   bool _connecting = false;
   String? _connectError;
@@ -83,6 +84,7 @@ class _UninstallDialogState extends State<UninstallDialog> {
     _hostController.dispose();
     _usernameController.dispose();
     _privateKeyController.dispose();
+    _passphraseController.dispose();
     _transport?.close();
     super.dispose();
   }
@@ -117,11 +119,13 @@ class _UninstallDialogState extends State<UninstallDialog> {
     });
 
     try {
+      final passphrase = _passphraseController.text;
       final transport = await Dartssh2Transport.connect(
         host: host,
         port: 22,
         username: username,
         privateKeyPem: privateKey,
+        passphrase: passphrase.isEmpty ? null : passphrase,
         onUnknownHostKey: _confirmHostKey,
       );
       if (!mounted) return;
@@ -256,6 +260,9 @@ class _UninstallDialogState extends State<UninstallDialog> {
           const SizedBox(height: 10),
           _label('SSH private key'),
           _textField(_privateKeyController, hint: '-----BEGIN OPENSSH PRIVATE KEY-----', maxLines: 4, monospace: true),
+          const SizedBox(height: 10),
+          _label('SSH key passphrase (leave blank if none)'),
+          _textField(_passphraseController, obscure: true),
           if (_connectError != null) ...[
             const SizedBox(height: 10),
             Text(_connectError!, style: AxTextStyles.mono.copyWith(fontSize: 11.5, color: AxColors.bad)),
@@ -328,11 +335,13 @@ class _UninstallDialogState extends State<UninstallDialog> {
     String? hint,
     int maxLines = 1,
     bool monospace = false,
+    bool obscure = false,
     void Function(String)? onChanged,
   }) {
     return TextField(
       controller: controller,
       maxLines: maxLines,
+      obscureText: obscure,
       onChanged: onChanged,
       style: monospace ? AxTextStyles.mono.copyWith(fontSize: 12) : AxTextStyles.sans.copyWith(fontSize: 13),
       decoration: InputDecoration(

@@ -43,6 +43,7 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
   final _hostController = TextEditingController();
   final _usernameController = TextEditingController(text: 'ubuntu');
   final _privateKeyController = TextEditingController();
+  final _passphraseController = TextEditingController();
   final _deviceNameController = TextEditingController(text: _defaultDeviceName());
   bool _rememberKey = false;
   bool _connecting = false;
@@ -101,6 +102,7 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
     _hostController.dispose();
     _usernameController.dispose();
     _privateKeyController.dispose();
+    _passphraseController.dispose();
     _deviceNameController.dispose();
     _wgSubnetController.dispose();
     _wgPortController.dispose();
@@ -130,11 +132,13 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
     });
 
     try {
+      final passphrase = _passphraseController.text;
       final transport = await Dartssh2Transport.connect(
         host: host,
         port: 22,
         username: username,
         privateKeyPem: privateKey,
+        passphrase: passphrase.isEmpty ? null : passphrase,
         onUnknownHostKey: _confirmHostKey,
       );
 
@@ -261,10 +265,18 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'Make sure UDP 51820 (WireGuard) is open at your cloud provider\'s '
-                    'network firewall level (e.g. an OCI VCN Security List or AWS Security '
-                    'Group) - this is separate from the server\'s own firewall and this '
-                    'wizard cannot open it for you.',
+                    '• Open UDP 51820 (WireGuard) at your cloud provider\'s network firewall '
+                    'level (e.g. an OCI VCN Security List or AWS Security Group) - this is '
+                    'separate from the server\'s own firewall and this wizard cannot open it '
+                    'for you. The archangeld port below does NOT need to be opened there - it '
+                    'only ever listens on the WireGuard interface, never the public internet.\n\n'
+                    '• The SSH key you paste below must already be authorized on the server '
+                    '(the cloud-init user\'s authorized_keys) - this wizard connects with it, '
+                    'it doesn\'t add it for you.\n\n'
+                    '• The SSH user needs passwordless sudo (true by default for "ubuntu" on '
+                    'OCI/AWS/most providers, not guaranteed on a custom image).\n\n'
+                    '• Only Ubuntu/Debian on x86_64 or aarch64 is supported.\n\n'
+                    'Safe to re-run against a server that\'s already partially or fully set up.',
                     style: AxTextStyles.sans.copyWith(fontSize: 12, color: AxColors.fg2, height: 1.5),
                   ),
                 ],
@@ -279,6 +291,9 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
             const SizedBox(height: 12),
             _label('SSH private key'),
             _textField(_privateKeyController, hint: '-----BEGIN OPENSSH PRIVATE KEY-----', maxLines: 6, mono: true),
+            const SizedBox(height: 12),
+            _label('SSH key passphrase (leave blank if none)'),
+            _textField(_passphraseController, hint: '', obscure: true),
             const SizedBox(height: 8),
             Row(
               children: [
@@ -429,10 +444,11 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
         child: Text(text, style: AxTextStyles.sans.copyWith(fontSize: 11, color: AxColors.fg3)),
       );
 
-  Widget _textField(TextEditingController controller, {required String hint, int maxLines = 1, bool mono = false}) {
+  Widget _textField(TextEditingController controller, {required String hint, int maxLines = 1, bool mono = false, bool obscure = false}) {
     return TextField(
       controller: controller,
       maxLines: maxLines,
+      obscureText: obscure,
       style: (mono ? AxTextStyles.mono : AxTextStyles.sans).copyWith(fontSize: 12.5),
       decoration: InputDecoration(
         filled: true,
