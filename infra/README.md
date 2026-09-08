@@ -11,6 +11,9 @@ SSH for you, no manual steps 1 and 3 required - see
 This runbook remains the reference for what those scripts actually do,
 manual recovery if the wizard isn't available, and everything OCI/account
 -side the wizard can't touch (section 10's firewall gotcha in particular).
+The reverse also exists in-app now — `infra/scripts/uninstall.sh` tears
+WireGuard and archangeld back down, run from Settings' "Danger zone" the
+same way; see [`app/backend/README.md#uninstalling`](../app/backend/README.md#uninstalling).
 
 ---
 

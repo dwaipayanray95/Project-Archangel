@@ -92,6 +92,14 @@ no Windows toolchain. Everything below is real, complete code, but
   comes up. Unit-tested against a fake SSH transport (success path,
   rollback path, pre-install verification-failure path) but never run
   against a real VPS.
+- **In-app server uninstall**: `VpsSetupService.uninstall()` +
+  `UninstallDialog` (Settings' "Danger zone", visible once paired) -
+  uploads and runs `infra/scripts/uninstall.sh` over SSH to stop/remove
+  archangeld and tear down WireGuard entirely, gated behind a typed
+  confirmation step since it's irreversible; on success also clears the
+  app's own pairing/WireGuard state for that server. Unit-tested against
+  a fake SSH transport (command sequence, failure surfacing) but never
+  run against a real VPS.
 
 ## Known gaps / things to do next, roughly in priority order
 
@@ -179,10 +187,11 @@ lib/
     ssh_credentials.dart         — shared "remember this key" storage
     known_hosts.dart             — TOFU fingerprint store
     local_auth_service.dart      — biometric/PIN re-auth gate
-    vps_setup_service.dart       — SSH orchestration: first-time setup + backend update
+    vps_setup_service.dart       — SSH orchestration: first-time setup + backend update + uninstall
     pairing_bundle.dart          — parses archangeld pair's bundle format
   widgets/                       — shell chrome (top bar, sidebar, command palette),
-                                    host_key_dialog.dart, backend_update_dialog.dart
+                                    host_key_dialog.dart, backend_update_dialog.dart,
+                                    uninstall_dialog.dart
   screens/                       — the 7 sections + screens/setup/ (the wizard)
 
 macos/Runner/

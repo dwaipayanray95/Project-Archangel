@@ -278,4 +278,28 @@ void main() {
       expect(ssh.commands.any((c) => c.contains('sudo systemctl restart archangel')), isFalse);
     });
   });
+
+  group('VpsSetupService.uninstall', () {
+    test('uploads and runs uninstall.sh with the app/wg ports', () async {
+      final ssh = FakeSshTransport();
+      final service = VpsSetupService(ssh);
+
+      await service.uninstall(appPort: 8443, wgPort: 51820).toList();
+
+      expect(ssh.uploadedPaths.any((p) => p.endsWith('uninstall.sh')), isTrue);
+      expect(ssh.commands.any((c) => c.contains('bash') && c.contains('uninstall.sh 8443 51820')), isTrue);
+    });
+
+    test('surfaces a failed script run as an exception without claiming success', () async {
+      final ssh = FakeSshTransport(responses: [
+        (RegExp(r'uninstall\.sh'), const SshExecResult(exitCode: 1, stdout: '', stderr: 'boom')),
+      ]);
+      final service = VpsSetupService(ssh);
+
+      await expectLater(
+        service.uninstall(appPort: 8443, wgPort: 51820),
+        emitsThrough(emitsError(isA<VpsSetupException>())),
+      );
+    });
+  });
 }

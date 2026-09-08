@@ -11,6 +11,7 @@ import '../theme/tokens.dart';
 import '../widgets/ax_widgets.dart';
 import '../widgets/backend_update_dialog.dart';
 import '../widgets/pairing_dialog.dart';
+import '../widgets/uninstall_dialog.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -186,6 +187,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ],
                     ),
                   ),
+                  if (backend.isPaired) ...[
+                    const SizedBox(height: 11),
+                    AxCard(
+                      padding: const EdgeInsets.all(15),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Danger zone', style: AxTextStyles.sans.copyWith(fontSize: 12.5, fontWeight: FontWeight.w700, color: AxColors.bad)),
+                          const SizedBox(height: 8),
+                          Text(
+                            'Stops and removes archangeld and WireGuard from the paired server entirely.',
+                            style: AxTextStyles.sans.copyWith(fontSize: 11.5, color: AxColors.fg3, height: 1.4),
+                          ),
+                          const SizedBox(height: 10),
+                          OutlinedButton(
+                            style: OutlinedButton.styleFrom(foregroundColor: AxColors.bad, side: BorderSide(color: AxColors.bad)),
+                            onPressed: () => showUninstallDialog(context),
+                            child: const Text('Uninstall backend'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ],
               );
 

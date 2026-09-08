@@ -89,6 +89,7 @@ class VpsSetupService {
     'allow_port_before_reject.sh',
     'ensure_boot_fw_fixup.sh',
     'archangel.service',
+    'uninstall.sh',
   ];
 
   PairingBundle? _result;
@@ -402,6 +403,31 @@ sudo mv /tmp/archangeld-new /opt/archangel/archangeld
 
   Future<void> _rollbackBinary() async {
     await _exec('sudo mv -f /opt/archangel/archangeld.bak /opt/archangel/archangeld && sudo systemctl restart archangel');
+  }
+
+  /// Reverses [run]: stops and removes archangeld (service, binary,
+  /// config, token store) and tears down WireGuard (interface, config,
+  /// keys, firewall port) - see infra/scripts/uninstall.sh, uploaded and
+  /// run the same way every other script in this class is. One-way by
+  /// design (no backup/rollback, unlike [updateBackend]) - the caller is
+  /// expected to have already gotten explicit confirmation before calling
+  /// this. Does not touch this device's local pairing state; that's the
+  /// caller's responsibility once this stream completes, since the
+  /// server this device was paired to no longer exists.
+  Stream<SetupProgress> uninstall({required int appPort, required int wgPort}) async* {
+    yield const SetupProgress('upload', 'Uploading the uninstall script...');
+    await _uploadScripts();
+    yield const SetupProgress('upload', 'Script uploaded.', stageComplete: true);
+
+    yield const SetupProgress('remove', 'Stopping archangeld and WireGuard, and removing them from this server...');
+    final result = await _exec('bash $_remoteScriptDir/uninstall.sh $appPort $wgPort');
+    if (!result.ok) {
+      throw VpsSetupException(
+        'remove',
+        'exit ${result.exitCode}: ${result.stderr.isNotEmpty ? result.stderr : result.stdout}',
+      );
+    }
+    yield const SetupProgress('remove', 'archangeld and WireGuard removed.', stageComplete: true);
   }
 
   Future<SshExecResult> _exec(String command) => _ssh.exec(command);

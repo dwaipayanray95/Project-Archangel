@@ -35,6 +35,7 @@ sed -i.bak -E "s/^version: .*/version: ${FRONTEND_VERSION}+${BUILD_NUMBER:-1}/" 
 rm -f "$PUBSPEC.bak"
 
 APP_VERSION_DART="$FRONTEND_DIR/lib/services/app_version.dart"
+sed -i.bak -E "s/static const String current = '[0-9.]+';/static const String current = '${FRONTEND_VERSION}';/" "$APP_VERSION_DART"
 sed -i.bak -E "s/static const String archangel = '[0-9.]+';/static const String archangel = '${ARCHANGEL_VERSION}';/" "$APP_VERSION_DART"
 rm -f "$APP_VERSION_DART.bak"
 

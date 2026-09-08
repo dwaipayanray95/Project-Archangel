@@ -123,6 +123,27 @@ for reference): build with `make build-linux-amd64` or
 `/etc/archangel/config.yaml` with `bind_addr` set to the WireGuard
 interface IP — never `0.0.0.0` or the box's public IP.
 
+## Uninstalling
+
+`infra/scripts/uninstall.sh [app_port] [wg_port]` reverses the WireGuard
++ archangeld install: stops and removes the `archangel` systemd service,
+the binary and `/etc/archangel` (config + token store), and tears down
+WireGuard entirely (interface, `wg0.conf`, generated keys, the firewall
+ports opened for both) — the server stops being reachable over the
+tunnel at all. It deliberately does **not** touch what
+`baseline_setup.sh` did (installed packages, the swapfile, general ufw/
+SSH posture) — reverting OS-level baseline changes safely is out of
+scope. Safe to re-run; every removal tolerates the thing it's removing
+already being gone.
+
+In-app: Settings' "Danger zone" section (visible once paired) has an
+"Uninstall backend" button that runs this same script over SSH — same
+connection machinery as the setup wizard and backend update flow
+(`VpsSetupService.uninstall()`), gated behind an explicit typed
+confirmation since it's irreversible from the app. On success the app
+also forgets its own pairing/WireGuard state for that server, since it
+no longer exists.
+
 ## Releases
 
 One tag-triggered GitHub Actions workflow,
