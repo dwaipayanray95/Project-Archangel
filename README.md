@@ -37,5 +37,12 @@ This repo is a **monorepo**: each top-level folder is a self-contained piece, wi
 - Frontend architecture, what's real vs. mock, the setup wizard and update flow → [`app/frontend/README.md`](app/frontend/README.md) and [`app/frontend/WORKING.md`](app/frontend/WORKING.md)
 - WireGuard per-platform implementation details → [`app/frontend/WIREGUARD.md`](app/frontend/WIREGUARD.md)
 
+## License
+
+This project is licensed under [The Awesome License v1 (TALv1)](LICENSE) — free
+for personal/non-profit use; commercial use requires either open-sourcing your
+project or a commercial agreement with the author. This is a **source-available**
+license, not OSI-approved open source.
+
 ---
 *Last updated: 2026-09-08*

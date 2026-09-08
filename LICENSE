@@ -1,0 +1,77 @@
+# The Awesome License v1 (TALv1)
+
+**Copyright (c) 2026 dwaipayanray95**
+**Contact for Commercial Licensing:** https://github.com/dwaipayanray95
+
+### THE VIBE (PREAMBLE)
+This code is meant to be shared, learned from, and built upon. You are free to use it
+to create amazing things. However, if you are turning a profit from my hard work, it
+is only fair that we share the success or keep the open-source ecosystem thriving.
+
+### THE RULES (PERMISSIONS & CONDITIONS)
+Permission is hereby granted, free of charge, to any person obtaining a copy of this
+software and associated documentation files (the "Software"), to deal in the Software
+without restriction, subject to the following conditions:
+
+**1. Free for Open & Non-Profit Use:**
+You may use, copy, modify, merge, publish, and distribute the Software freely for
+personal, educational, or open-source projects where no revenue is generated.
+
+**2. The Commercial Catch:**
+If you use this Software, or any modified version of it, in a project intended to
+generate revenue (including but not limited to paid software, SaaS, in-app purchases,
+or applications running advertisements), **or if you use this Software or any
+modified version of it internally within, or on behalf of, a for-profit entity —
+whether or not the Software itself is sold, distributed, or exposed to end users** —
+you must choose ONE of the following paths:
+*   **Option A (Pay It Forward):** You must release the entire source code of your
+    revenue-generating (or internally-used) project publicly under an
+    **OSI-approved open source license** (see https://opensource.org/licenses for
+    the current list). A license not on that list does not satisfy this option.
+*   **Option B (Pay the Piper):** You must contact the original author at the
+    contact information provided above to negotiate a commercial license, revenue
+    cut, or flat fee *before* public launch, internal deployment, or monetization.
+
+**3. Credit Where It's Due (Attribution):**
+If any portion of this Software is integrated into your project, you must provide
+clear, public credit to the original author. This credit must be easily visible to
+end-users and developers (for example, in an "About" page, a "Credits" screen, or
+prominently within the project's primary README file). This attribution requirement
+does not grant any trademark, branding, or endorsement rights — see "No Trademark
+Rights" below.
+
+**4. No Trademark Rights:**
+Nothing in this license grants permission to use the original author's name, alias,
+or any associated branding to imply endorsement, sponsorship, or affiliation with
+your project, beyond the plain attribution required by Section 3.
+
+**5. Termination:**
+This license, and all rights granted under it, terminate automatically and
+immediately if you fail to comply with Section 2 (The Commercial Catch). Upon
+termination, you must cease all use, distribution, and monetization of the Software
+and any modified version of it until compliance is restored or a separate agreement
+is reached with the original author under Option B.
+
+### THE BEERWARE CLAUSE
+As long as you retain this copyright notice and license in all copies of the
+Software, you can do whatever you want with this stuff, subject strictly to the
+rules above. If you like my work and use my work, you owe me a beer whenever we meet.
+
+*Legal Clarification:* Under no circumstances does buying, offering, or providing a
+beer (or any other beverage or gift) waive, substitute, or satisfy the commercial
+obligations outlined in Section 2 (The Commercial Catch). Revenue-generating projects
+must still comply with Option A or Option B regardless of beverages purchased.
+
+### GOVERNING LAW
+This license shall be governed by and construed in accordance with the laws
+applicable in the original author's jurisdiction, without regard to conflict-of-law
+principles, unless otherwise agreed in writing under a separate commercial
+agreement.
+
+### THE LEGAL SHIELD (DISCLAIMER OF WARRANTY)
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
+CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE
+OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
