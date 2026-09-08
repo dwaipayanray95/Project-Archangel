@@ -19,19 +19,31 @@ summary below.
 
 - **App shell**: top status bar, sidebar nav (bottom tabs on phone width),
   ⌘K command palette — all 7 sections (Overview, Monitoring, Files,
-  Containers, DevOps, Terminal, Settings) render correctly. Verified by
-  building and running the real Linux binary in a sandbox and screenshotting
-  every section.
-- **Terminal ↔ archangeld, end-to-end, for real**: built and ran the actual
-  `archangeld` Go binary locally, then drove the exact JSON frame protocol
-  `TerminalSession` implements against it — a real PTY executed `whoami`
-  and `uname -a` and returned real output over the real WebSocket. This is
-  the strongest verification anything in this repo has.
+  Containers, DevOps, Terminal, Settings) render correctly.
+- **Terminal ↔ archangeld, end-to-end, for real**: a real PTY executed
+  `whoami` and `uname -a` and returned real output over the real
+  WebSocket, driving the exact JSON frame protocol `TerminalSession`
+  implements.
+- **Monitoring ↔ archangeld, for real**: real `/proc`-derived CPU/memory/
+  disk metrics and process list, kill/renice both working against a
+  real deployed server, with a `/code-review` pass fixing a concurrent
+  map write crash, an always-permissive `CheckOrigin`, a fake
+  `CPUPercent` that broke sort order, and kill/renice errors that used
+  to be silently swallowed.
+- **Files ↔ archangeld, for real, and jailed**: list/preview/download
+  confined to a configured `files_root` both textually and through
+  symlinks (`internal/files/service.go`'s `resolvePath` -
+  `filepath.EvalSymlinks` re-validated against the root, not just the
+  requested string). Fails closed if `files_root` is unset. The
+  sidebar's shortcut list shows the real configured root and its real
+  subdirectories - it used to be a hardcoded list of unrelated system
+  paths (`/etc`, `/var/log`, ...) that 403'd on anything but a `files_root`
+  of `/`, and a failed tap used to stay highlighted as if it had
+  succeeded; both fixed.
 - **WireGuard state machine on Linux**: real `wireguard_flutter` package,
   real failure path exercised (no `wg`/sudo in that sandbox → surfaced
   correctly as "unsupported" in both the top bar and Settings, no crash).
-- **macOS WireGuard, end-to-end, for real** — the strongest verification
-  in this repo alongside the Terminal proof above: real device, real
+- **macOS WireGuard, end-to-end, for real** — real device, real
   deployed server, a real Terminal shell session opened over the tunnel
   this app's own custom `wireguard-go`-based backend manages (not a VPN
   client running alongside it — this app *is* the VPN client). Took five
@@ -44,7 +56,13 @@ summary below.
   rough edges (an unexplained first-connect-needs-a-reconnect quirk,
   three admin prompts per connect, full-tunnel `0.0.0.0/0` still
   unhandled).
-- `flutter analyze`: clean. `flutter test test/widget_test.dart`: passes.
+- **In-app VPS setup wizard, end-to-end, for real**: bootstrapped a real
+  fresh VPS entirely from the app (baseline, WireGuard, binary download,
+  systemd service, pairing) with no manual SSH.
+- `flutter analyze`: clean. `flutter test`: 20 passing (4 pre-existing
+  failures in `all_sections_test.dart`, unrelated to any of the work
+  below - a `FilesService` provider missing from `test_utils.dart`'s
+  test harness).
 
 ## What's built but NOT verified (no toolchain existed to test it)
 
@@ -57,131 +75,129 @@ no Windows toolchain. Everything below is real, complete code, but
 - **Windows**: same — `wireguard_flutter` bundles real `WireGuardNT`
   binaries, app now requests admin elevation on launch (needed to create
   the tunnel service). Never compiled with an actual Windows toolchain.
-- **CI workflow** (`.github/workflows/build-app.yml`): manual
-  `workflow_dispatch` with checkboxes for macOS/Windows/Android/backend/all.
-  Caches Flutter pub packages and Gradle. Had a real path bug in the
-  Windows zip step (fixed in commit `517cbd6` — verify it actually works
-  by running the workflow, since it was never actually executed against
-  GitHub Actions, only checked by re-deriving the path math by hand).
+- **The release pipeline** (`.github/workflows/release.yml`, replacing
+  the old manual `build-app.yml`/`release-backend.yml`): tag-triggered
+  only, no manual dispatch. A tag's suffix (`-b`/`-f`/none) decides
+  backend/frontend/both, and every run publishes to that tag's GitHub
+  Release including a generated `version-manifest.json` (what
+  `UpdateCheckService` reads). The tag-parsing and manifest
+  freeze-logic bash has been reasoned through by hand for every tag
+  shape but **never actually run on GitHub's runners** - needs a real
+  tag pushed (`v0.1.0` proved out the original backend-only workflow;
+  this unified one hasn't had its own real run yet).
+- **In-app backend updates**: `VpsSetupService.updateBackend()` +
+  `BackendUpdateDialog` - backs up the current binary, downloads +
+  version-verifies the new one, restarts the service, polls `/health`
+  for up to ~20s, and rolls back automatically if the new version never
+  comes up. Unit-tested against a fake SSH transport (success path,
+  rollback path, pre-install verification-failure path) but never run
+  against a real VPS.
 
 ## Known gaps / things to do next, roughly in priority order
 
-1. **Run the CI workflow for real** at least once per target
-   (macOS/Windows/Android/backend) and fix whatever breaks — none of it
-   has actually executed on GitHub's runners yet, only been reasoned
-   through.
+1. **Run the release pipeline for real** — push a tag of each shape
+   (`vX.Y.Z`, `-b`, `-f`) and confirm the manifest freeze logic actually
+   behaves as designed across a sequence of releases.
 2. **Android/Windows real-device testing**: nobody has run this app on
    either platform yet. Expect friction — this is genuinely the first
-   time this code has met a real toolchain for either. (macOS is now
-   done — see above.)
-3. ~~archangeld has no pairing endpoint~~ **Done, verified end-to-end on
-   real hardware**: `archangeld pair <name> [--qr]` generates a WireGuard
-   keypair, live-adds it as a peer, generates a per-device token, and
-   prints one bundle the app's single pairing dialog
-   (`lib/widgets/pairing_dialog.dart`) parses to configure both the tunnel
-   and the backend connection in one step - paste on any platform, scan a
-   QR code on Android. See `app/backend/internal/tokenstore`,
-   `internal/wgpeer`, and `lib/services/pairing_bundle.dart`. Two real
-   bugs were found and fixed getting this working on the real deployed
-   server: a Swift `ifconfig -l` parsing bug that always picked an
-   already-taken `utun` interface (fixed in `WireGuardMacOS.swift`'s
-   `nextFreeUtunName`), and `tokens.json` being written 0600 root-owned
-   by the `pair` CLI (root, via sudo) while the long-running service runs
-   as the unprivileged `archangel` user - crashed the service on startup
-   until fixed (`internal/tokenstore`'s `save()` now chowns/chmods it
-   group-readable) plus the server needed to stop caching the token store
-   at startup and re-read it per auth check (a device paired while the
-   server is already running - i.e. every real-world use of `pair` - was
-   otherwise invisible until a manual restart).
-3b. **New**: an in-app VPS setup wizard
-   (`lib/screens/setup/setup_wizard_screen.dart`,
-   `lib/services/vps_setup_service.dart`) that bootstraps a *fresh* VPS
-   over SSH from inside the app itself - no more SSHing in by hand to run
-   the infra scripts and `deploy.sh`. Takes a host + SSH private key,
-   detects the server's architecture, uploads and runs the real
-   `infra/scripts/*.sh` (bundled as Flutter assets - copies, not a shared
-   path, see that file's doc comment on keeping them in sync), downloads
-   the matching `archangeld` release binary from GitHub Releases (see
-   `.github/workflows/release-backend.yml` - **a version tag must be
-   pushed at least once** for "latest" to resolve to anything), installs
-   the systemd service, and runs `archangeld pair --raw` to auto-pair.
-   Safe to re-run against an already-set-up server (skips WireGuard setup
-   if `wg0.conf` exists, never overwrites `config.yaml`). The app's root
-   router (`main.dart`'s `_RootRouter`) now shows a landing screen
-   choosing between this wizard and the existing manual pairing dialog
-   when neither the tunnel nor the backend is paired yet.
-   **Unverified**: the SSH orchestration logic has unit tests
-   against a fake SSH transport (idempotency branches, failure paths),
-   `flutter analyze`/`flutter build linux` are clean, but it has never
-   run against a real VPS - that's the natural next real-hardware
-   milestone, same discipline as everything else in this file.
-   Files/Containers/Monitoring/DevOps screens are still 100% mock data
-   (`lib/data/mock_data.dart`) - no backend routes exist for them yet,
-   pairing only covers the tunnel + terminal auth.
-
-3c. **Security hardening from `/code-review`** (all fixed, none verified
-   against a real device/server): a real remote-command-injection bug in
-   `VpsSetupService._writeConfigIfAbsent` (a free-text "Advanced" field
-   was spliced into a quoted shell heredoc - a value containing the
-   delimiter on its own line could break out and run arbitrary shell as
-   root on the next connect; fixed by writing `config.yaml` via SFTP
-   instead, same as the setup scripts already were, plus input
-   validation in the wizard UI) - regression-tested in
-   `test/vps_setup_service_test.dart`. SSH host-key verification (was:
-   accept any key silently; now: trust-on-first-use with a confirmation
-   dialog, and a stored-fingerprint mismatch is never auto-accepted -
-   `lib/services/known_hosts.dart`, `lib/services/ssh_transport.dart`'s
-   `resolveHostKeyTrust`, tested in `test/ssh_transport_test.dart`). An
-   OS-level biometric/PIN re-auth gate (`local_auth`,
-   `lib/services/local_auth_service.dart`) before reading back a
-   "remembered" SSH private key on Android/macOS/Windows (no official
-   Linux backend, degrades to no gate there rather than locking anyone
-   out - required changing Android's `MainActivity` from
-   `FlutterActivity` to `FlutterFragmentActivity`, unverified on a real
-   Android device). `WireGuardController.bootstrap()` now sets
-   `isBootstrapped` in a `finally` block so no exception path can strand
-   `_RootRouter` on its loading spinner forever. The wizard's
-   `_enterArchangel()` now catches pairing failures instead of leaving a
-   dead "Enter Archangel" button with no feedback.
-4. **Terminal is not a full terminal emulator** — `TerminalSession`
+   time this code has met a real toolchain for either. (macOS, and now
+   the full backend feature set, are done — see above.)
+3. **In-app backend update, against a real VPS**: exercise the actual
+   SSH update flow (including a deliberately-broken build, to confirm
+   the auto-rollback really works) once a real tagged release exists.
+4. **Containers/DevOps are still 100% mock data** (`lib/data/mock_data.dart`)
+   - no backend routes exist for them yet.
+5. **Terminal is not a full terminal emulator** — `TerminalSession`
    renders raw output, no ANSI/VT100 escape sequence handling. Fine for
    plain shell use, will show garbage for `htop`/`vim`/colored output.
    The `xterm` Flutter package is the natural next layer if that's wanted.
-5. **macOS WireGuard routing is incomplete** — only the tunnel interface's
+6. **macOS WireGuard routing is incomplete** — only the tunnel interface's
    own address gets configured (`ifconfig`); `AllowedIPs` beyond that
    aren't routed. Fine for archangeld's typical narrow AllowedIPs, not for
    a full-tunnel `0.0.0.0/0` config. See `WireGuardMacOS.swift`'s
    `bringUpInterface`.
+7. **`test_utils.dart`'s shared test harness is missing a `FilesService`
+   provider** - the cause of `all_sections_test.dart`'s 4 pre-existing
+   failures (a `ProviderNotFoundException` when the Files section
+   renders in that test's `AppShell`). Low priority (nothing user-facing
+   is actually broken - confirmed by running the real app), but worth
+   fixing so the suite goes fully green.
+
+## Security hardening history (from `/code-review` passes)
+
+- A real remote-command-injection bug in
+  `VpsSetupService._writeConfigIfAbsent` (a free-text "Advanced" field
+  was spliced into a quoted shell heredoc - fixed by writing
+  `config.yaml` via SFTP instead, same as the setup scripts already
+  were, plus input validation in the wizard UI) - regression-tested in
+  `test/vps_setup_service_test.dart`.
+- SSH host-key verification (was: accept any key silently; now:
+  trust-on-first-use with a confirmation dialog, and a stored-fingerprint
+  mismatch is never auto-accepted - `lib/services/known_hosts.dart`,
+  `lib/services/ssh_transport.dart`'s `resolveHostKeyTrust`,
+  `lib/widgets/host_key_dialog.dart` (shared between the setup wizard
+  and the backend-update dialog), tested in `test/ssh_transport_test.dart`).
+- An OS-level biometric/PIN re-auth gate (`local_auth`,
+  `lib/services/local_auth_service.dart`) before reading back a
+  "remembered" SSH private key (`lib/services/ssh_credentials.dart`, also
+  shared between the wizard and the update dialog) on Android/macOS/
+  Windows (no official Linux backend, degrades to no gate there rather
+  than locking anyone out - required changing Android's `MainActivity`
+  from `FlutterActivity` to `FlutterFragmentActivity`, unverified on a
+  real Android device).
+- `WireGuardController.bootstrap()` now sets `isBootstrapped` in a
+  `finally` block so no exception path can strand `_RootRouter` on its
+  loading spinner forever. The wizard's `_enterArchangel()` now catches
+  pairing failures instead of leaving a dead "Enter Archangel" button
+  with no feedback.
+- The Files tab's root jailing itself was a real, critical finding
+  (`CleanPath` alone never confined anything - see
+  `app/backend/README.md`'s file-browser section) and symlink escapes
+  weren't checked - both fixed backend-side, with regression tests in
+  `app/backend/internal/files/files_test.go`.
 
 ## File map (where things live)
 
 ```
 lib/
-  main.dart                    — app entry, provider wiring
-  theme/                       — design tokens ported from the mockup's CSS
+  main.dart                     — app entry, provider wiring
+  theme/                        — design tokens ported from the mockup's CSS
   data/
-    app_state.dart             — section/accent-color app state
-    mock_data.dart             — all the fake data most screens still use
+    app_state.dart              — section/accent-color app state
+    mock_data.dart               — fake data still used by Containers/DevOps/Overview
   services/
-    tunnel_config.dart         — wg-quick config parse/render
-    wireguard_controller.dart  — WireGuard state machine, routes to per-platform backend
+    tunnel_config.dart           — wg-quick config parse/render
+    wireguard_controller.dart    — WireGuard state machine, routes to per-platform backend
     macos_wireguard_channel.dart — Dart side of the macOS MethodChannel
-    archangeld_connection.dart — backend host/token pairing + storage
-    terminal_session.dart      — the real PTY-over-WebSocket client
-  widgets/                     — shell chrome (top bar, sidebar, command palette)
-  screens/                     — the 7 sections
+    archangeld_connection.dart   — backend host/token pairing + storage + /health version
+    terminal_session.dart        — the real PTY-over-WebSocket client
+    monitoring_service.dart      — real system metrics/process list, mock fallback
+    files_service.dart           — real jailed file browser, mock fallback
+    app_version.dart             — frontend/project version constants, synced from VERSION
+    update_check_service.dart    — fetches GitHub's latest release manifest
+    ssh_transport.dart           — dartssh2 wrapper + host-key TOFU
+    ssh_credentials.dart         — shared "remember this key" storage
+    known_hosts.dart             — TOFU fingerprint store
+    local_auth_service.dart      — biometric/PIN re-auth gate
+    vps_setup_service.dart       — SSH orchestration: first-time setup + backend update
+    pairing_bundle.dart          — parses archangeld pair's bundle format
+  widgets/                       — shell chrome (top bar, sidebar, command palette),
+                                    host_key_dialog.dart, backend_update_dialog.dart
+  screens/                       — the 7 sections + screens/setup/ (the wizard)
 
 macos/Runner/
-  WireGuardMacOS.swift         — the unverified native WireGuard backend
-  Resources/wireguard-go/      — cross-compiled real wireguard-go binaries
+  WireGuardMacOS.swift          — the unverified native WireGuard backend
+  Resources/wireguard-go/       — cross-compiled real wireguard-go binaries
   DebugProfile.entitlements, Release.entitlements — App Sandbox OFF (required)
 
 windows/runner/
-  runner.exe.manifest          — requests admin elevation (needed for the tunnel service)
+  runner.exe.manifest           — requests admin elevation (needed for the tunnel service)
 
-.github/workflows/build-app.yml — manual multi-target CI build
+scripts/sync_version.sh          — syncs pubspec.yaml + app_version.dart from ../../VERSION
 
-WIREGUARD.md                   — detailed per-platform WireGuard status (read this)
+.github/workflows/release.yml    — tag-triggered build+release pipeline (backend + frontend)
+
+WIREGUARD.md                     — detailed per-platform WireGuard status (read this)
 ```
 
 ## How to pick this up

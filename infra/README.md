@@ -4,6 +4,14 @@ Personal Oracle Cloud (OCI) Always-Free VPS setup — vibecoding box, dev sandbo
 
 This is the **recovery runbook**. If a server dies, gets deleted, or a fresh account is needed, everything required to rebuild it from scratch lives here.
 
+**There is now a faster path for the WireGuard + backend half of this**:
+the Flutter app's in-app setup wizard runs the exact scripts below over
+SSH for you, no manual steps 1 and 3 required - see
+[`app/frontend/README.md`](../app/frontend/README.md#what-the-app-does).
+This runbook remains the reference for what those scripts actually do,
+manual recovery if the wizard isn't available, and everything OCI/account
+-side the wizard can't touch (section 10's firewall gotcha in particular).
+
 ---
 
 ## Quickstart: set up a fresh server

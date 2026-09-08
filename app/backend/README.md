@@ -1,23 +1,51 @@
 # Archangel Backend
 
-The Go control-plane server: a single static binary exposing terminal, file,
-service, resource, Docker, and OCI instance controls to the Flutter app —
+The Go control-plane server: a single static binary (`archangeld`) exposing
+terminal, system-monitoring, and file-browser controls to the Flutter app —
 reachable only over a WireGuard tunnel, never the public internet.
 
-Full architecture and API design: see the plan this was built from (route
-table, WebSocket frame protocol, WireGuard setup, systemd unit design).
+## Status
 
-## Status: Milestone 1 (skeleton, auth, terminal) — deployed and verified
-
-Implemented:
-- `/api/v1/health` — unauthenticated liveness check
+Implemented and deployed:
+- `/api/v1/health` — unauthenticated liveness check, also returns the
+  running binary's version (see [Versioning](#versioning) below)
 - `/ws/terminal` — real interactive PTY shell over WebSocket, token-authed
-- Per-device token auth (`X-Archangel-Token` header or `?token=` query param for the WS handshake) plus a legacy single shared-token fallback
-- `archangeld pair <device-name> [--qr]` — one-command pairing: generates a WireGuard keypair, live-adds it as a peer, generates a per-device token, and prints one bundle (or QR code) the app parses to configure both the tunnel and the connection in one step
+- `/api/v1/system/metrics`, `/api/v1/system/processes`
+  (+ `/{pid}/kill`, `/{pid}/renice`), `/ws/stats` — CPU/memory/disk
+  metrics and process list/control, real `/proc` data
+- `/api/v1/files/{list,read,download}` — a file browser jailed to a
+  configured `files_root`, both textually and through symlinks (a
+  symlink inside the root pointing outside it is treated as broken, not
+  followed) — see `internal/files/service.go`'s `resolvePath`. Fails
+  closed: an unset `files_root` rejects every request rather than
+  defaulting to the whole filesystem
+- Per-device token auth (`X-Archangel-Token` header or `?token=` query
+  param for the WS handshake) plus a legacy single shared-token fallback
+- `archangeld pair <device-name> [--qr] [--raw]` — one-command pairing:
+  generates a WireGuard keypair, live-adds it as a peer, generates a
+  per-device token, and prints one bundle (or QR code, or bare bundle
+  line with `--raw` for the in-app setup wizard) the app parses to
+  configure both the tunnel and the connection in one step
+- `archangeld version` — prints the running build's version (see below)
 
-Deployed to `Archangel-Mk1` (2026-09-02) and verified end-to-end over the real network path (not just localhost): health endpoint reachable via the WireGuard IP and confirmed unreachable via the public IP, and a real terminal session (decoded `stdout` frame showing the actual live shell prompt) confirmed working over the tunnel from a paired Mac. See `infra/README.md` section 10 for the firewall issues hit and fixed along the way.
+Not yet implemented: Docker/container control, OCI instance control,
+DevOps automation — the Containers/DevOps screens in the frontend are
+still 100% mock data with no backend routes behind them.
 
-Not yet implemented (later milestones): files, services, stats/watchdog, Docker, OCI instance control.
+## Versioning
+
+The backend's version comes from the root [`VERSION`](../../VERSION)
+file's `BACKEND` line, baked in at build time via `-ldflags` (see
+`Makefile`'s `build-linux-amd64`/`build-linux-arm64` targets and
+`internal/version`). It is:
+- printed by `archangeld version` / `archangeld -v` / `archangeld --version`
+- returned by `/api/v1/health`'s `version` field (unauthenticated - this
+  is how the Flutter app shows "Backend version" in Settings and detects
+  when a redeploy is needed)
+
+The root `VERSION` file also carries `FRONTEND` and `ARCHANGEL`
+(project-wide) version lines, each versioned and released
+independently - see [Releases](#releases).
 
 ## Local development
 
@@ -29,6 +57,8 @@ make run
 
 `bind_addr` in `config.yaml` should stay `127.0.0.1` for local dev — it only
 becomes the WireGuard interface IP once actually deployed to the server.
+`files_root` must be set to something for the file-browser routes to work
+at all (see `config.example.yaml`'s comment on it).
 
 ## Pairing a new device
 
@@ -46,21 +76,86 @@ prints one base64 bundle (and, with `--qr`, the same bundle as an ASCII QR
 code) containing everything the app needs — WireGuard config and
 archangeld host/token together. Paste it (or scan it, Android only) into
 Archangel's pairing screen. Nothing in the bundle is stored in plaintext
-on the server after this — same discipline as `gen-token`.
+on the server after this — same discipline as `gen-token`. `--raw` prints
+only the bare bundle line (no human-readable preamble) - what the in-app
+setup wizard parses.
 
 ## Deploying to a server
 
-**Scripted:** [`deploy.sh`](deploy.sh) — run this from your own machine (Mac, etc.), not on the server itself:
+**Three ways to get a binary onto a server, in order of how "hands-off" they are:**
+
+1. **In-app setup wizard** (new servers, or updating an existing one) —
+   from the Flutter app itself: "Set up a new server" on first launch
+   bootstraps a fresh Ubuntu/Debian VPS entirely over SSH (baseline,
+   WireGuard, binary, systemd service, pairing - no manual steps). Once
+   a server is already set up, Settings' "Backend version" row shows an
+   "update available" badge when a newer release exists; tapping it
+   re-SSHes in (reusing a remembered key, or asking for one) to back up
+   the current binary, download and version-verify the new one, restart
+   the service, and auto-rollback if it doesn't come up healthy within
+   ~20s. See `app/frontend/lib/services/vps_setup_service.dart`
+   (`run()` for first-time setup, `updateBackend()` for updates) - this
+   is deliberately SSH-based rather than a self-update HTTP endpoint,
+   because `archangeld` runs as an **unprivileged** systemd user
+   (`NoNewPrivileges=true`, `ProtectSystem=strict` in `archangel.service`)
+   specifically so a compromised/leaked app token can't rewrite the
+   binary it's running - it truly cannot update itself.
+2. **`deploy.sh`** — the original scripted manual path, run from your own
+   machine (Mac, etc.), not the server itself:
+   ```bash
+   ./deploy.sh
+   # or override defaults:
+   SERVER_HOST=1.2.3.4 SERVER_USER=ubuntu SSH_KEY=~/path/to/key ./deploy.sh
+   ```
+   Builds the binary locally, creates the `archangel` system user +
+   directories on the server if they don't exist yet, copies and
+   installs the binary, generates a fresh auth token **only if
+   `/etc/archangel/config.yaml` doesn't already exist**, installs/updates
+   the systemd service, and verifies it started. Safe to re-run any time.
+3. **A pushed release tag** — see [Releases](#releases) below; downloads
+   a prebuilt binary from GitHub rather than building locally.
+
+**Manual equivalent** (what both scripted paths actually do, kept here
+for reference): build with `make build-linux-amd64` or
+`build-linux-arm64`, create a system `archangel` user, copy the binary to
+`/opt/archangel/archangeld`, `archangel.service` to
+`/etc/systemd/system/`, and a real `config.yaml` to
+`/etc/archangel/config.yaml` with `bind_addr` set to the WireGuard
+interface IP — never `0.0.0.0` or the box's public IP.
+
+## Releases
+
+One tag-triggered GitHub Actions workflow,
+[`.github/workflows/release.yml`](../../.github/workflows/release.yml),
+builds and publishes to GitHub Releases. The tag's suffix decides scope
+(the leading version number is always the release-event label, matching
+`VERSION`'s `ARCHANGEL` line on a clean tag - the actual per-component
+version always comes from `VERSION`'s own `BACKEND`/`FRONTEND` lines,
+never from the tag number itself):
+
+| Tag shape | Builds |
+|---|---|
+| `vX.Y.Z-b` | backend only (`archangeld-amd64`, `archangeld-arm64`) |
+| `vX.Y.Z-f` | frontend only (macOS, Windows, Android) |
+| `vX.Y.Z` | both |
+
 ```bash
-./deploy.sh
-# or override defaults:
-SERVER_HOST=1.2.3.4 SERVER_USER=ubuntu SSH_KEY=~/path/to/key ./deploy.sh
+git tag v0.3.6 && git push origin v0.3.6
 ```
-It builds the binary locally, creates the `archangel` system user + directories on the server if they don't exist yet, copies and installs the binary, generates a fresh auth token **only if `/etc/archangel/config.yaml` doesn't already exist** (re-running never silently rotates an already-paired app's token), installs/updates the systemd service, and verifies it started. The generated token is shown exactly once — save it in a password manager immediately, it's needed to pair the Flutter app and the server never stores it in plaintext.
 
-Safe to re-run any time you've rebuilt the binary — it'll redeploy the new build and restart the service without touching an existing config/token.
-
-**Manual equivalent** (what the script actually does, kept here for reference): build with `make build-linux-amd64` (Archangel-Mk1) or `make build-linux-arm64` (Ampere, once allocated), create a system `archangel` user, copy the binary to `/opt/archangel/archangeld`, `archangel.service` to `/etc/systemd/system/`, and a real `config.yaml` to `/etc/archangel/config.yaml` with `bind_addr` set to the WireGuard interface IP — never `0.0.0.0` or the box's public IP.
+Every run also generates and publishes `version-manifest.json` - the
+file `UpdateCheckService` (frontend) fetches to know the latest
+version of each component and whether the currently-running
+app/backend are behind. Its freeze logic matters: a `-b`-only release
+freezes the frontend's reported version at whatever the *previous*
+release actually shipped (not just whatever `VERSION`'s `FRONTEND` line
+happens to say in the working tree), so a backend-only release never
+makes the app think the frontend needs updating, and vice versa for
+`-f`. See the workflow's `plan` job for the exact freeze rules, and
+`backend_tag`/`frontend_tag` in the manifest for which release's assets
+actually carry each component's binary (the version number can stay
+frozen across several releases in a row, so the binary itself may live
+on an older release than "latest").
 
 ## Testing the terminal endpoint manually
 
