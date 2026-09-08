@@ -11,6 +11,7 @@ import '../../services/ssh_transport.dart';
 import '../../services/vps_setup_service.dart';
 import '../../services/wireguard_controller.dart';
 import '../../theme/tokens.dart';
+import '../../widgets/archangel_mark.dart';
 import '../../widgets/ax_widgets.dart';
 import '../../widgets/host_key_dialog.dart';
 
@@ -391,7 +392,7 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.check_circle, color: AxColors.accent, size: 48),
+              const ArchangelMark(size: 30, tile: true),
               const SizedBox(height: 16),
               Text('Server ready', style: AxTextStyles.sans.copyWith(fontSize: 18, fontWeight: FontWeight.w700)),
               const SizedBox(height: 8),

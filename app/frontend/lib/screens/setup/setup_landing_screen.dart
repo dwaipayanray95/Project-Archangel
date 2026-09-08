@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../theme/tokens.dart';
+import '../../widgets/archangel_mark.dart';
 import '../../widgets/ax_widgets.dart';
 import '../../widgets/pairing_dialog.dart';
 import 'setup_wizard_screen.dart';
@@ -26,6 +27,8 @@ class SetupLandingScreen extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                const Align(alignment: Alignment.centerLeft, child: ArchangelMark(size: 34, tile: true)),
+                const SizedBox(height: 16),
                 Text(
                   'Archangel',
                   style: AxTextStyles.sans.copyWith(fontSize: 28, fontWeight: FontWeight.w700, color: AxColors.fg),
