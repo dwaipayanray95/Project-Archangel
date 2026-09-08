@@ -4,6 +4,7 @@ import '../data/app_state.dart';
 import '../services/monitoring_service.dart';
 import '../services/wireguard_controller.dart';
 import '../theme/tokens.dart';
+import 'archangel_mark.dart';
 import 'ax_widgets.dart';
 
 /// The persistent top status bar — present on every screen, showing tunnel
@@ -52,7 +53,7 @@ class TopBar extends StatelessWidget implements PreferredSizeWidget {
             width: 21,
             height: 21,
             decoration: BoxDecoration(color: accent, borderRadius: BorderRadius.circular(7)),
-            child: const Icon(Icons.shield_outlined, size: 12, color: AxColors.bg),
+            child: Center(child: ArchangelMark(size: 12, color: AxColors.bg)),
           ),
           if (wide) ...[
             const SizedBox(width: 9),
