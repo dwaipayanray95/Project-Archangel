@@ -86,7 +86,7 @@ Provisioned directly via the OCI Console — no capacity scarcity issue for this
 ## 4. SSH Access
 
 - Keypair was generated via the OCI Console during instance creation ("Generate a key pair for me")
-- **Private key** lives at: `~/Downloads/project-archangel.key` on Ray's Mac — **never commit this to git, never copy it onto the VPS itself**
+- **Private key** lives at: `~/Downloads/project-archangel.key` on your Mac — **never commit this to git, never copy it onto the VPS itself**
 - **Public key** lives at: `~/Downloads/project-archangel-public.key.pub` — safe to share/commit, this is what's actually installed in the VPS's `authorized_keys`
 - **Same keypair is reused across both instances** (Ampere and AMD Micro) — simpler to manage, at the cost of both boxes sharing blast radius if the private key is ever compromised. Acceptable tradeoff for a personal sandbox setup.
 - If the private key is ever lost: don't try to recover it — generate a fresh keypair and update `authorized_keys` on next rebuild. A password manager (Bitwarden/1Password secure file storage) is the recommended backup location for the private key — **not** GitHub, not the VPS itself.
@@ -263,7 +263,7 @@ It's meant to keep growing as new milestones land — deploying `app/backend`'s 
 ## 12. Related / Future Projects
 
 - **Archangel control app** — decided: a **Go backend** (single static binary, SSH bridge + resource watchdog + file browser, holds real SSH credentials server-side) plus a **Flutter frontend** (Android-first, one Dart codebase with iOS/web reach later). The app authenticates to the Go API with its own token — it never touches the SSH key directly. Lives in `app/` at the repo root once work starts (see the root [`README.md`](../README.md)); not yet started.
-- Possible future use cases for the VPS(es): self-hosted WireGuard VPN, backend/staging host for the Us Together and Outstand app projects, personal automation projects (finance tracking, uptime monitoring, morning dashboard, etc.)
+- Possible future use cases for the VPS(es): self-hosted WireGuard VPN, backend/staging host for other personal app projects, personal automation projects (finance tracking, uptime monitoring, morning dashboard, etc.)
 
 ---
 *Last updated: 2026-09-01*

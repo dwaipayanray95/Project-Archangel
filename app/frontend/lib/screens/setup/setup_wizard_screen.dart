@@ -49,6 +49,7 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
   bool _connecting = false;
   String? _connectError;
 
+  bool _firewallHelpOpen = false;
   bool _advancedOpen = false;
   final _wgSubnetController = TextEditingController(text: '10.10.0');
   final _wgPortController = TextEditingController(text: '51820');
@@ -279,6 +280,55 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
                     'Safe to re-run against a server that\'s already partially or fully set up.',
                     style: AxTextStyles.sans.copyWith(fontSize: 12, color: AxColors.fg2, height: 1.5),
                   ),
+                  const SizedBox(height: 4),
+                  ExpansionTile(
+                    tilePadding: EdgeInsets.zero,
+                    initiallyExpanded: _firewallHelpOpen,
+                    onExpansionChanged: (v) => setState(() => _firewallHelpOpen = v),
+                    title: Text(
+                      'How do I open this port? (step-by-step)',
+                      style: AxTextStyles.sans.copyWith(fontSize: 12.5, fontWeight: FontWeight.w600, color: AxColors.warn),
+                    ),
+                    children: const [
+                      _FirewallHowTo(
+                        provider: 'Oracle Cloud (OCI)',
+                        steps: [
+                          'Console → Networking → Virtual Cloud Networks → open your VCN.',
+                          'Click the Subnet your instance is in, then its attached Security List.',
+                          'Add Ingress Rule: Source CIDR 0.0.0.0/0, IP Protocol UDP, Destination Port Range 51820.',
+                          'Save Changes - takes effect immediately, no restart needed.',
+                        ],
+                      ),
+                      _FirewallHowTo(
+                        provider: 'AWS (EC2)',
+                        steps: [
+                          'EC2 Console → Instances → select your instance → Security tab.',
+                          'Click the security group listed there.',
+                          'Edit inbound rules → Add rule: Type "Custom UDP", Port range 51820, Source 0.0.0.0/0 (or your IP for tighter access).',
+                          'Save rules.',
+                        ],
+                      ),
+                      _FirewallHowTo(
+                        provider: 'DigitalOcean',
+                        steps: [
+                          'Control panel → Networking → Firewalls.',
+                          'Create (or edit) a firewall and attach it to your droplet.',
+                          'Add an inbound rule: Type UDP, Port 51820, Sources: All IPv4/All IPv6 (or restrict as needed).',
+                          'Save.',
+                        ],
+                      ),
+                      _FirewallHowTo(
+                        provider: 'Any other provider',
+                        steps: [
+                          'Find the "network firewall" / "security group" / "cloud firewall" section '
+                              'in your provider\'s console - it\'s always separate from anything '
+                              'configured on the server itself (ufw, iptables, etc.).',
+                          'Add an inbound/ingress rule allowing UDP traffic on port 51820 from any source (0.0.0.0/0).',
+                          'Save/apply the change.',
+                        ],
+                      ),
+                    ],
+                  ),
                 ],
               ),
             ),
@@ -458,6 +508,48 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
         isDense: true,
         contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      ),
+    );
+  }
+}
+
+/// One provider's numbered steps inside the "Before you start" card's
+/// "How do I open this port?" expander - every cloud provider's own
+/// network-firewall UI is different, and this is the one prerequisite the
+/// wizard genuinely cannot do for the user (see the SSH-can't-reach-it note
+/// above it), so it's worth spelling out rather than just naming the
+/// concept and leaving people to go find the menu themselves.
+class _FirewallHowTo extends StatelessWidget {
+  final String provider;
+  final List<String> steps;
+  const _FirewallHowTo({required this.provider, required this.steps});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(provider, style: AxTextStyles.sans.copyWith(fontSize: 12, fontWeight: FontWeight.w700, color: AxColors.fg)),
+          const SizedBox(height: 4),
+          for (var i = 0; i < steps.length; i++)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 3),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(
+                    width: 18,
+                    child: Text('${i + 1}.', style: AxTextStyles.mono.copyWith(fontSize: 11.5, color: AxColors.fg3)),
+                  ),
+                  Expanded(
+                    child: Text(steps[i], style: AxTextStyles.sans.copyWith(fontSize: 11.5, color: AxColors.fg2, height: 1.4)),
+                  ),
+                ],
+              ),
+            ),
+        ],
       ),
     );
   }
