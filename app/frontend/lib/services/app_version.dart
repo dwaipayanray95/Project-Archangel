@@ -11,6 +11,6 @@
 class AppVersion {
   AppVersion._();
 
-  static const String current = '0.3.12';
-  static const String archangel = '0.3.17';
+  static const String current = '0.3.13';
+  static const String archangel = '0.3.18';
 }

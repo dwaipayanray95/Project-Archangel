@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -62,6 +63,15 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
   bool _pairing = false;
   String? _pairError;
 
+  // Ticks once a second while a stage is running, so a long silent step
+  // (e.g. baseline setup's apt update/upgrade, which can easily take
+  // 30-90s with no output of its own) visibly shows the app is still
+  // working instead of looking frozen. Reset to 0 whenever a new
+  // (not-yet-complete) stage starts - see the reset in _runSetup's
+  // listener below.
+  Timer? _elapsedTimer;
+  int _elapsedSeconds = 0;
+
   static String _defaultDeviceName() {
     if (Platform.isMacOS) return 'mac';
     if (Platform.isWindows) return 'windows';
@@ -103,6 +113,7 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
     _wgPortController.dispose();
     _appPortController.dispose();
     _transport?.close();
+    _elapsedTimer?.cancel();
     super.dispose();
   }
 
@@ -157,6 +168,10 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
         _connecting = false;
         _step = _WizardStep.progress;
       });
+      _elapsedSeconds = 0;
+      _elapsedTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (mounted) setState(() => _elapsedSeconds++);
+      });
       _runSetup();
     } catch (e) {
       if (!mounted) return;
@@ -190,9 +205,16 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
     );
     final service = VpsSetupService(_transport!);
     service.run(config).listen(
-      (event) => setState(() => _log.add(event)),
-      onError: (Object e) => setState(() => _runError = e),
+      (event) => setState(() {
+        _log.add(event);
+        if (!event.stageComplete) _elapsedSeconds = 0;
+      }),
+      onError: (Object e) {
+        _elapsedTimer?.cancel();
+        setState(() => _runError = e);
+      },
       onDone: () {
+        _elapsedTimer?.cancel();
         if (_runError == null) {
           setState(() {
             _bundle = service.result;
@@ -425,19 +447,36 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
               itemCount: _log.length,
               itemBuilder: (context, i) {
                 final entry = _log[i];
+                // The actively-running stage is the last, not-yet-complete
+                // entry, as long as nothing has failed - show a spinner and
+                // an elapsed-time counter there instead of a static hollow
+                // circle, so a long silent step (apt update/upgrade can
+                // easily run 30-90s with no output) still visibly shows
+                // the app is working rather than looking frozen.
+                final isActive = i == _log.length - 1 && !entry.stageComplete && _runError == null;
                 return Padding(
                   padding: const EdgeInsets.symmetric(vertical: 4),
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Icon(
-                        entry.stageComplete ? Icons.check_circle : Icons.radio_button_unchecked,
-                        size: 14,
-                        color: entry.stageComplete ? AxColors.accent : AxColors.fg3,
-                      ),
+                      if (isActive)
+                        const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: AxColors.accent),
+                        )
+                      else
+                        Icon(
+                          entry.stageComplete ? Icons.check_circle : Icons.radio_button_unchecked,
+                          size: 14,
+                          color: entry.stageComplete ? AxColors.accent : AxColors.fg3,
+                        ),
                       const SizedBox(width: 8),
                       Expanded(
-                        child: Text(entry.message, style: AxTextStyles.mono.copyWith(fontSize: 12, color: AxColors.fg2)),
+                        child: Text(
+                          isActive ? '${entry.message} (${_elapsedSeconds}s)' : entry.message,
+                          style: AxTextStyles.mono.copyWith(fontSize: 12, color: AxColors.fg2),
+                        ),
                       ),
                     ],
                   ),
