@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/dwaipayanray95/project-archangel/backend/internal/auth"
+	"github.com/dwaipayanray95/project-archangel/backend/internal/devops"
 	"github.com/dwaipayanray95/project-archangel/backend/internal/docker"
 	"github.com/dwaipayanray95/project-archangel/backend/internal/files"
 	"github.com/dwaipayanray95/project-archangel/backend/internal/system"
@@ -44,8 +45,15 @@ func NewRouter(verify auth.Verifier) http.Handler {
 	mux.Handle("POST /api/v1/docker/containers/{id}/{action}", auth.Middleware(verify, http.HandlerFunc(docker.ContainerActionHandler)))
 	mux.Handle("GET /ws/docker/containers/{id}/logs", auth.Middleware(verify, http.HandlerFunc(docker.ContainerLogsWsHandler)))
 
-	// Milestones 4+ add their routes here:
-	// /api/v1/services/*, /api/v1/oci/*.
+	// DevOps (Services, Scheduled Timers, Reverse Proxy, Deployments)
+	mux.Handle("GET /api/v1/devops/services", auth.Middleware(verify, http.HandlerFunc(devops.ServicesHandler)))
+	mux.Handle("POST /api/v1/devops/services/{name}/{action}", auth.Middleware(verify, http.HandlerFunc(devops.ServiceActionHandler)))
+	mux.Handle("GET /api/v1/devops/scheduled", auth.Middleware(verify, http.HandlerFunc(devops.ScheduledHandler)))
+	mux.Handle("POST /api/v1/devops/scheduled/{name}/run", auth.Middleware(verify, http.HandlerFunc(devops.ScheduledRunHandler)))
+	mux.Handle("GET /api/v1/devops/proxy", auth.Middleware(verify, http.HandlerFunc(devops.ProxyHandler)))
+	mux.Handle("POST /api/v1/devops/proxy/{domain}/test", auth.Middleware(verify, http.HandlerFunc(devops.ProxyTestHandler)))
+	mux.Handle("GET /api/v1/devops/deployments", auth.Middleware(verify, http.HandlerFunc(devops.DeploymentsHandler)))
+	mux.Handle("POST /api/v1/devops/deployments/{name}/run", auth.Middleware(verify, http.HandlerFunc(devops.DeploymentRunHandler)))
 
 	return withLogging(mux)
 }

@@ -198,4 +198,68 @@ class ArchangeldConnection extends ChangeNotifier {
     }
     return Uri.parse('ws://$_host/ws/docker/containers/$id/logs').replace(queryParameters: {'token': _token});
   }
+
+  /// `http://<host>/api/v1/devops/services`
+  Uri devopsServicesHttpUri() {
+    if (!isPaired) {
+      throw StateError('Not paired with a backend');
+    }
+    return Uri.parse('http://$_host/api/v1/devops/services');
+  }
+
+  /// `http://<host>/api/v1/devops/services/{name}/{action}`
+  Uri devopsServiceActionHttpUri(String name, String action) {
+    if (!isPaired) {
+      throw StateError('Not paired with a backend');
+    }
+    return Uri.parse('http://$_host/api/v1/devops/services/$name/$action');
+  }
+
+  /// `http://<host>/api/v1/devops/scheduled`
+  Uri devopsScheduledHttpUri() {
+    if (!isPaired) {
+      throw StateError('Not paired with a backend');
+    }
+    return Uri.parse('http://$_host/api/v1/devops/scheduled');
+  }
+
+  /// `http://<host>/api/v1/devops/scheduled/{name}/run`
+  Uri devopsScheduledRunHttpUri(String name) {
+    if (!isPaired) {
+      throw StateError('Not paired with a backend');
+    }
+    return Uri.parse('http://$_host/api/v1/devops/scheduled/$name/run');
+  }
+
+  /// `http://<host>/api/v1/devops/proxy`
+  Uri devopsProxyHttpUri() {
+    if (!isPaired) {
+      throw StateError('Not paired with a backend');
+    }
+    return Uri.parse('http://$_host/api/v1/devops/proxy');
+  }
+
+  /// `http://<host>/api/v1/devops/proxy/{domain}/test`
+  Uri devopsProxyTestHttpUri(String domain) {
+    if (!isPaired) {
+      throw StateError('Not paired with a backend');
+    }
+    return Uri.parse('http://$_host/api/v1/devops/proxy/$domain/test');
+  }
+
+  /// `http://<host>/api/v1/devops/deployments`
+  Uri devopsDeploymentsHttpUri() {
+    if (!isPaired) {
+      throw StateError('Not paired with a backend');
+    }
+    return Uri.parse('http://$_host/api/v1/devops/deployments');
+  }
+
+  /// `http://<host>/api/v1/devops/deployments/{name}/run`
+  Uri devopsDeploymentRunHttpUri(String name) {
+    if (!isPaired) {
+      throw StateError('Not paired with a backend');
+    }
+    return Uri.parse('http://$_host/api/v1/devops/deployments/$name/run');
+  }
 }
