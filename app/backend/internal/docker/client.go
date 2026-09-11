@@ -196,7 +196,11 @@ func (c *Client) ListContainers() ([]ContainerItem, error) {
 			if err == nil {
 				statChan <- statResult{idx: idx, cpu: cpu, memMb: memMb, memLabel: label}
 			} else {
-				statChan <- statResult{idx: idx, cpu: 0.1, memMb: 32, memLabel: "32 MB"}
+				// Leave the zero-value/"—" defaults already set on result[idx]
+				// rather than fabricating a plausible-looking reading - a
+				// failed/timed-out stats fetch must never be shown as real
+				// telemetry.
+				statChan <- statResult{idx: idx, cpu: 0, memMb: 0, memLabel: "—"}
 			}
 		}(i, result[i].ID)
 	}
@@ -340,6 +344,43 @@ func (c *Client) ContainerStats(ctx context.Context, id string) (cpu float64, me
 	}
 
 	return cpu, memMb, memLabel, nil
+}
+
+// IsTTY reports whether a container was created with a TTY attached
+// (docker run -t). Docker's /logs endpoint only multiplexes stdout/stderr
+// into the 8-byte-header framed protocol for non-TTY containers - a TTY
+// container's logs are raw bytes, so callers must check this before
+// deciding how to parse the stream.
+func (c *Client) IsTTY(ctx context.Context, id string) (bool, error) {
+	if !validContainerID.MatchString(id) {
+		return false, fmt.Errorf("invalid container id")
+	}
+
+	endpoint := fmt.Sprintf("http://localhost/containers/%s/json", id)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return false, err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return false, fmt.Errorf("docker inspect error %d", resp.StatusCode)
+	}
+
+	var data struct {
+		Config struct {
+			Tty bool `json:"Tty"`
+		} `json:"Config"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return false, err
+	}
+	return data.Config.Tty, nil
 }
 
 // StreamLogsReader opens a raw streaming reader to Docker's container logs.

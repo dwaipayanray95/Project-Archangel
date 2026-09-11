@@ -168,6 +168,15 @@ func ContainerLogsWsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Docker only multiplexes /logs output into the 8-byte-header framed
+	// protocol for containers created without a TTY - a TTY container's
+	// logs are raw bytes, and parsing them as framed would misinterpret
+	// arbitrary log content as stream-type/payload-size headers.
+	tty, err := defaultClient.IsTTY(ctx, id)
+	if err != nil {
+		tty = false
+	}
+
 	stream, err := defaultClient.StreamLogsReader(ctx, id, 100)
 	if err != nil {
 		_ = conn.WriteJSON(LogEntry{
@@ -180,38 +189,12 @@ func ContainerLogsWsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer stream.Close()
 
-	// Docker Multiplex Log Protocol:
-	// Each frame starts with an 8-byte header:
-	//   header[0] = stream type (1 = stdout, 2 = stderr, 0 = stdin)
-	//   header[1..3] = 0 (reserved)
-	//   header[4..7] = uint32 big-endian payload size
-	headerBuf := make([]byte, 8)
 	reader := bufio.NewReader(stream)
 
-	for {
-		// Read 8-byte header
-		_, err := io.ReadFull(reader, headerBuf)
-		if err != nil {
-			break
-		}
-
-		streamType := headerBuf[0]
-		payloadSize := binary.BigEndian.Uint32(headerBuf[4:8])
-
-		// Bound frame size to 1MB to prevent memory exhaustion
-		if payloadSize > 1024*1024 {
-			break
-		}
-
-		payload := make([]byte, payloadSize)
-		_, err = io.ReadFull(reader, payload)
-		if err != nil {
-			break
-		}
-
-		clean := strings.TrimRight(string(payload), "\r\n")
+	emit := func(streamType byte, raw string) bool {
+		clean := strings.TrimRight(raw, "\r\n")
 		if clean == "" {
-			continue
+			return true
 		}
 
 		level := "INFO"
@@ -238,8 +221,52 @@ func ContainerLogsWsHandler(w http.ResponseWriter, r *http.Request) {
 			Source: id,
 			Text:   clean,
 		}
+		return conn.WriteJSON(entry) == nil
+	}
 
-		if err := conn.WriteJSON(entry); err != nil {
+	if tty {
+		// Raw, unframed byte stream - read line by line.
+		for {
+			line, err := reader.ReadString('\n')
+			if line != "" && !emit(1, line) {
+				break
+			}
+			if err != nil {
+				break
+			}
+		}
+		return
+	}
+
+	// Docker Multiplex Log Protocol:
+	// Each frame starts with an 8-byte header:
+	//   header[0] = stream type (1 = stdout, 2 = stderr, 0 = stdin)
+	//   header[1..3] = 0 (reserved)
+	//   header[4..7] = uint32 big-endian payload size
+	headerBuf := make([]byte, 8)
+
+	for {
+		// Read 8-byte header
+		_, err := io.ReadFull(reader, headerBuf)
+		if err != nil {
+			break
+		}
+
+		streamType := headerBuf[0]
+		payloadSize := binary.BigEndian.Uint32(headerBuf[4:8])
+
+		// Bound frame size to 1MB to prevent memory exhaustion
+		if payloadSize > 1024*1024 {
+			break
+		}
+
+		payload := make([]byte, payloadSize)
+		_, err = io.ReadFull(reader, payload)
+		if err != nil {
+			break
+		}
+
+		if !emit(streamType, string(payload)) {
 			break
 		}
 	}

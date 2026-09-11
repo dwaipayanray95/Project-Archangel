@@ -148,9 +148,10 @@ class _ContainerDetailScreenState extends State<ContainerDetailScreen> {
                           label: 'Shell',
                           icon: Icons.terminal_rounded,
                           onTap: () {
+                            final appState = context.read<AppState>();
                             svc.stopLogStream();
                             Navigator.of(context).pop();
-                            context.read<AppState>().openTerminalWithCommand('docker exec -it ${c.name} sh');
+                            appState.openTerminalWithCommand('docker exec -it ${c.name} sh');
                           },
                         ),
                       ],
