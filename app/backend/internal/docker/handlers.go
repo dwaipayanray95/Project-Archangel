@@ -16,6 +16,16 @@ import (
 
 var defaultClient = NewClient()
 
+// SetDefaultClient overrides the package-level Docker client the HTTP
+// handlers use. Exported for tests: CI runners commonly ship a real,
+// live Docker daemon at the default socket path, so relying on
+// IsAvailable() naturally returning false to exercise the fallback/demo
+// path is environment-dependent - tests should point this at a client
+// with a guaranteed-nonexistent socket path instead.
+func SetDefaultClient(c *Client) {
+	defaultClient = c
+}
+
 // ContainersHandler handles GET /api/v1/docker/containers
 func ContainersHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {

@@ -9,6 +9,13 @@ import (
 	"github.com/dwaipayanray95/project-archangel/backend/internal/docker"
 )
 
+func init() {
+	// Force the fallback/demo path regardless of whether the machine
+	// running these tests happens to have a live Docker daemon at the
+	// default socket path (true on GitHub Actions' ubuntu-latest runners).
+	docker.SetDefaultClient(docker.NewClient("/nonexistent/docker.sock"))
+}
+
 func TestContainersHandlerFallback(t *testing.T) {
 	req := httptest.NewRequest("GET", "/api/v1/docker/containers", nil)
 	rec := httptest.NewRecorder()
