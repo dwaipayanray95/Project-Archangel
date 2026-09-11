@@ -12,7 +12,7 @@ import (
 
 // ListDeployments searches for deployment scripts in /srv/deploy or git hooks.
 func ListDeployments() ([]DeploymentItem, error) {
-	var items []DeploymentItem
+	items := make([]DeploymentItem, 0)
 
 	deployDirs := []string{"/srv/deploy", "/srv/scripts", "/var/scripts"}
 	for _, dir := range deployDirs {

@@ -88,7 +88,7 @@ func parseSystemctlTimers(raw string) []ScheduledItem {
 }
 
 func listLocalCron() []ScheduledItem {
-	var items []ScheduledItem
+	items := make([]ScheduledItem, 0)
 
 	// Check /etc/cron.d, /etc/crontab
 	files := []string{"/etc/crontab"}

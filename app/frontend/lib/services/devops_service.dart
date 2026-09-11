@@ -70,32 +70,40 @@ class DevopsService extends ChangeNotifier {
 
       final svcRes = results[0];
       if (svcRes.statusCode == 200) {
-        final list = jsonDecode(svcRes.body) as List<dynamic>;
-        _services = list.map((e) => DevRowModel.fromJson(e as Map<String, dynamic>)).toList();
+        final decoded = jsonDecode(svcRes.body);
+        if (decoded is List) {
+          _services = decoded.map((e) => DevRowModel.fromJson(e as Map<String, dynamic>)).toList();
+        }
       } else {
         anyFailed = true;
       }
 
       final schedRes = results[1];
       if (schedRes.statusCode == 200) {
-        final list = jsonDecode(schedRes.body) as List<dynamic>;
-        _scheduled = list.map((e) => DevRowModel.fromJson(e as Map<String, dynamic>)).toList();
+        final decoded = jsonDecode(schedRes.body);
+        if (decoded is List) {
+          _scheduled = decoded.map((e) => DevRowModel.fromJson(e as Map<String, dynamic>)).toList();
+        }
       } else {
         anyFailed = true;
       }
 
       final proxyRes = results[2];
       if (proxyRes.statusCode == 200) {
-        final list = jsonDecode(proxyRes.body) as List<dynamic>;
-        _proxy = list.map((e) => DevRowModel.fromJson(e as Map<String, dynamic>)).toList();
+        final decoded = jsonDecode(proxyRes.body);
+        if (decoded is List) {
+          _proxy = decoded.map((e) => DevRowModel.fromJson(e as Map<String, dynamic>)).toList();
+        }
       } else {
         anyFailed = true;
       }
 
       final depRes = results[3];
       if (depRes.statusCode == 200) {
-        final list = jsonDecode(depRes.body) as List<dynamic>;
-        _deployments = list.map((e) => DevRowModel.fromJson(e as Map<String, dynamic>)).toList();
+        final decoded = jsonDecode(depRes.body);
+        if (decoded is List) {
+          _deployments = decoded.map((e) => DevRowModel.fromJson(e as Map<String, dynamic>)).toList();
+        }
       } else {
         anyFailed = true;
       }

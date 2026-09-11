@@ -17,6 +17,9 @@ func ServicesHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	if services == nil {
+		services = []ServiceItem{}
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(services)
@@ -65,6 +68,9 @@ func ScheduledHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	if items == nil {
+		items = []ScheduledItem{}
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(items)
@@ -112,6 +118,9 @@ func ProxyHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	if items == nil {
+		items = []ProxyItem{}
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(items)
@@ -145,6 +154,9 @@ func DeploymentsHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+	if items == nil {
+		items = []DeploymentItem{}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
