@@ -74,11 +74,53 @@ func RunDeployment(name string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
+	// Cap captured output so a runaway or malicious script can't exhaust
+	// archangeld's memory (the full buffer is held in-process, then
+	// re-serialized into the HTTP response and rendered whole in the app).
+	const maxOutput = 256 * 1024
+	var buf boundedBuffer
+	buf.limit = maxOutput
 	cmd := exec.CommandContext(ctx, "/bin/sh", scriptPath)
-	out, err := cmd.CombinedOutput()
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf
+	err := cmd.Run()
+	out := buf.String()
 	if err != nil {
-		return string(out), fmt.Errorf("script failed: %v: %s", err, string(out))
+		return out, fmt.Errorf("script failed: %v: %s", err, out)
 	}
 
-	return string(out), nil
+	return out, nil
+}
+
+// boundedBuffer is an io.Writer that keeps only the first `limit` bytes
+// written to it, discarding the rest (with a trailing marker) rather than
+// growing without bound.
+type boundedBuffer struct {
+	buf       strings.Builder
+	limit     int
+	truncated bool
+}
+
+func (b *boundedBuffer) Write(p []byte) (int, error) {
+	n := len(p)
+	if !b.truncated {
+		remaining := b.limit - b.buf.Len()
+		if remaining <= 0 {
+			b.truncated = true
+		} else {
+			if len(p) > remaining {
+				p = p[:remaining]
+				b.truncated = true
+			}
+			b.buf.Write(p)
+		}
+	}
+	return n, nil
+}
+
+func (b *boundedBuffer) String() string {
+	if b.truncated {
+		return b.buf.String() + "\n... (output truncated)"
+	}
+	return b.buf.String()
 }

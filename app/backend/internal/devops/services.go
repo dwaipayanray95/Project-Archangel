@@ -15,6 +15,24 @@ import (
 
 var validUnitName = regexp.MustCompile(`^[a-zA-Z0-9@_.:-]+$`)
 
+// managedUnits is the fixed allowlist of systemd units this app is allowed
+// to inspect and act on. ServiceAction/TriggerScheduled must only ever
+// target something in this set - without it, any string matching
+// validUnitName's charset (which permits arbitrary unit names, including
+// ssh.service or archangeld.service itself) would be handed straight to
+// `systemctl <action> <name>`, turning "manage a few homelab services" into
+// "manage anything on the box."
+var managedUnits = map[string]bool{
+	"caddy.service":               true,
+	"docker.service":              true,
+	"postgresql.service":          true,
+	"wg-quick@wg0.service":        true,
+	"archangeld.service":          true,
+	"unattended-upgrades.service": true,
+	"ssh.service":                 true,
+	"cron.service":                true,
+}
+
 // ListServices inspects systemd service units.
 func ListServices() ([]ServiceItem, error) {
 	if runtime.GOOS != "linux" {
@@ -31,16 +49,7 @@ func ListServices() ([]ServiceItem, error) {
 	defer cancel()
 
 	// List targeted services or common homelab units
-	units := []string{
-		"caddy.service",
-		"docker.service",
-		"postgresql.service",
-		"wg-quick@wg0.service",
-		"archangeld.service",
-		"unattended-upgrades.service",
-		"ssh.service",
-		"cron.service",
-	}
+	units := managedUnitNames()
 
 	cmd := exec.CommandContext(ctx, systemctl, append([]string{"show", "--property=Id,Description,LoadState,ActiveState,SubState,ActiveEnterTimestamp"}, units...)...)
 	out, err := cmd.Output()
@@ -126,9 +135,18 @@ func parseSystemctlShow(raw string) []ServiceItem {
 	return items
 }
 
+// managedUnitNames returns managedUnits' keys.
+func managedUnitNames() []string {
+	names := make([]string, 0, len(managedUnits))
+	for name := range managedUnits {
+		names = append(names, name)
+	}
+	return names
+}
+
 // ServiceAction triggers systemctl start, stop, or restart.
 func ServiceAction(name, action string) error {
-	if !validUnitName.MatchString(name) {
+	if !validUnitName.MatchString(name) || !managedUnits[name] {
 		return fmt.Errorf("invalid service name")
 	}
 

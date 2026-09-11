@@ -192,6 +192,26 @@ class _DevopsScreenState extends State<DevopsScreen> {
             onSelect: (t) => setState(() => _tab = t),
           ),
           const SizedBox(height: 14),
+          if (backend.isPaired && svc.error != null) ...[
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+              decoration: BoxDecoration(
+                color: AxColors.bad.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(AxRadius.md),
+                border: Border.all(color: AxColors.bad.withValues(alpha: 0.3)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.error_outline_rounded, size: 14, color: AxColors.bad),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(svc.error!, style: AxTextStyles.mono.copyWith(fontSize: 11.5, color: AxColors.bad)),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
           if (!backend.isPaired)
             Container(
               padding: const EdgeInsets.all(32),

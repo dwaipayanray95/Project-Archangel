@@ -119,19 +119,25 @@ func TestProxyUpstream(domain string) (bool, string) {
 		return false, "invalid domain name"
 	}
 
-	// Verify that the domain actually belongs to our configured reverse proxy routes
+	// Verify that the domain actually belongs to our configured reverse proxy
+	// routes. Fail closed: if the routes can't be read (or there simply are
+	// none), that's not license to probe an arbitrary caller-supplied
+	// host/IP - it must be treated the same as "no match found," otherwise
+	// this becomes an open SSRF proxy on any host without a readable Caddy
+	// config (Caddy not installed, admin API unreachable, no routes yet).
 	activeRoutes, err := ListProxy()
-	if err == nil && len(activeRoutes) > 0 {
-		matched := false
-		for _, r := range activeRoutes {
-			if strings.EqualFold(r.Domain, domain) {
-				matched = true
-				break
-			}
+	if err != nil {
+		return false, "could not verify configured proxy routes"
+	}
+	matched := false
+	for _, r := range activeRoutes {
+		if strings.EqualFold(r.Domain, domain) {
+			matched = true
+			break
 		}
-		if !matched {
-			return false, "unconfigured domain: only registered proxy routes can be tested"
-		}
+	}
+	if !matched {
+		return false, "unconfigured domain: only registered proxy routes can be tested"
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)

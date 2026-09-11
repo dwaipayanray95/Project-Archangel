@@ -66,31 +66,46 @@ class DevopsService extends ChangeNotifier {
         http.get(backend.devopsDeploymentsHttpUri(), headers: headers).catchError((_) => http.Response('[]', 500)),
       ]);
 
+      var anyFailed = false;
+
       final svcRes = results[0];
       if (svcRes.statusCode == 200) {
         final list = jsonDecode(svcRes.body) as List<dynamic>;
         _services = list.map((e) => DevRowModel.fromJson(e as Map<String, dynamic>)).toList();
+      } else {
+        anyFailed = true;
       }
 
       final schedRes = results[1];
       if (schedRes.statusCode == 200) {
         final list = jsonDecode(schedRes.body) as List<dynamic>;
         _scheduled = list.map((e) => DevRowModel.fromJson(e as Map<String, dynamic>)).toList();
+      } else {
+        anyFailed = true;
       }
 
       final proxyRes = results[2];
       if (proxyRes.statusCode == 200) {
         final list = jsonDecode(proxyRes.body) as List<dynamic>;
         _proxy = list.map((e) => DevRowModel.fromJson(e as Map<String, dynamic>)).toList();
+      } else {
+        anyFailed = true;
       }
 
       final depRes = results[3];
       if (depRes.statusCode == 200) {
         final list = jsonDecode(depRes.body) as List<dynamic>;
         _deployments = list.map((e) => DevRowModel.fromJson(e as Map<String, dynamic>)).toList();
+      } else {
+        anyFailed = true;
       }
 
-      _error = null;
+      // catchError above turns a network failure into a fake 500 response
+      // rather than throwing, so Future.wait never rejects on its own - a
+      // fully-unreachable backend must still surface as an error here
+      // instead of silently leaving stale/empty data with no indication
+      // anything went wrong.
+      _error = anyFailed ? 'Failed to reach the backend for one or more DevOps sections.' : null;
     } catch (e) {
       debugPrint('Error fetching devops data: $e');
       _error = e.toString();
