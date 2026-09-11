@@ -1,7 +1,7 @@
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'local_kv_store.dart';
 
 const _kKeyPrefix = 'known_host_';
-const _secureStorage = FlutterSecureStorage();
+final _store = LocalKvStore.instance;
 
 /// A minimal trust-on-first-use (TOFU) store for SSH host key
 /// fingerprints, the same model OpenSSH's own `known_hosts` uses:
@@ -11,8 +11,7 @@ const _secureStorage = FlutterSecureStorage();
 /// callback, which is what actually decides whether to trust a new or
 /// changed key - this class only stores the outcome.
 class KnownHosts {
-  Future<String?> get(String host) => _secureStorage.read(key: '$_kKeyPrefix$host');
+  Future<String?> get(String host) => _store.read('$_kKeyPrefix$host');
 
-  Future<void> trust(String host, String fingerprint) =>
-      _secureStorage.write(key: '$_kKeyPrefix$host', value: fingerprint);
+  Future<void> trust(String host, String fingerprint) => _store.write('$_kKeyPrefix$host', fingerprint);
 }

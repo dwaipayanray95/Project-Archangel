@@ -1,20 +1,19 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
+
+import 'local_kv_store.dart';
 
 const _kHostKey = 'archangeld_host';
 const _kTokenKey = 'archangeld_token';
-const _secureStorage = FlutterSecureStorage(
-  mOptions: MacOsOptions(usesDataProtectionKeychain: false),
-);
+final _store = LocalKvStore.instance;
 
 /// The archangeld connection details: host:port (reachable only over the
 /// WireGuard tunnel - see WIREGUARD.md) and the single auth token from
-/// `archangeld gen-token`. Stored via the OS keychain/keystore, same as
-/// the WireGuard private key - this token is a bearer credential for the
-/// whole backend, not something to leave in plaintext prefs.
+/// `archangeld gen-token`. Stored in the local app-state file (see
+/// local_kv_store.dart's doc comment for why this isn't Keychain-backed)
+/// rather than plaintext prefs.
 class ArchangeldConnection extends ChangeNotifier {
   String? _host;
   String? get host => _host;
@@ -39,8 +38,8 @@ class ArchangeldConnection extends ChangeNotifier {
   bool get isLoaded => _loaded;
 
   Future<void> load() async {
-    _host = await _secureStorage.read(key: _kHostKey);
-    _token = await _secureStorage.read(key: _kTokenKey);
+    _host = await _store.read(_kHostKey);
+    _token = await _store.read(_kTokenKey);
     _loaded = true;
     notifyListeners();
     if (isPaired) {
@@ -54,8 +53,8 @@ class ArchangeldConnection extends ChangeNotifier {
     if (cleanHost.isEmpty) throw const FormatException('Host is required');
     if (cleanToken.isEmpty) throw const FormatException('Token is required');
 
-    await _secureStorage.write(key: _kHostKey, value: cleanHost);
-    await _secureStorage.write(key: _kTokenKey, value: cleanToken);
+    await _store.write(_kHostKey, cleanHost);
+    await _store.write(_kTokenKey, cleanToken);
     _host = cleanHost;
     _token = cleanToken;
     notifyListeners();
@@ -63,8 +62,8 @@ class ArchangeldConnection extends ChangeNotifier {
   }
 
   Future<void> unpair() async {
-    await _secureStorage.delete(key: _kHostKey);
-    await _secureStorage.delete(key: _kTokenKey);
+    await _store.delete(_kHostKey);
+    await _store.delete(_kTokenKey);
     _host = null;
     _token = null;
     _backendVersion = null;

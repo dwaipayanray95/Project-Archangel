@@ -356,8 +356,9 @@ class _FilledPill extends StatelessWidget {
 
 /// The Tunnel card on Settings: real WireGuard state (via
 /// [WireGuardController]), pair/unpair, connect/disconnect, view config.
-/// Real archangeld host/token pairing (host:port + auth token, stored via
-/// flutter_secure_storage) — same connection the Terminal screen uses.
+/// Real archangeld host/token pairing (host:port + auth token, stored in
+/// the local app-state file — see local_kv_store.dart) — same connection
+/// the Terminal screen uses.
 class _BackendCard extends StatelessWidget {
   const _BackendCard();
 

@@ -2,9 +2,9 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:wireguard_flutter/wireguard_flutter.dart';
 
+import 'local_kv_store.dart';
 import 'macos_wireguard_channel.dart';
 import 'tunnel_config.dart';
 
@@ -21,9 +21,7 @@ const _kStorageKey = 'wg_tunnel_config';
 /// requires a value regardless.
 const _kProviderBundleId = 'dev.archangel.archangel.tunnel';
 
-const _secureStorage = FlutterSecureStorage(
-  mOptions: MacOsOptions(usesDataProtectionKeychain: false),
-);
+final _store = LocalKvStore.instance;
 
 /// Wraps the platform's WireGuard backend behind a small app-specific API:
 /// load/save the paired config, connect/disconnect, and a status stream
@@ -124,18 +122,18 @@ class WireGuardController extends ChangeNotifier {
 
   Future<void> _loadSavedConfig() async {
     try {
-      final raw = await _secureStorage.read(key: _kStorageKey);
+      final raw = await _store.read(_kStorageKey);
       if (raw != null) _config = TunnelConfig.parse(raw);
     } catch (e) {
       _lastError = 'Saved tunnel config could not be read: $e';
     }
   }
 
-  /// Parses, persists (encrypted via the OS keychain/keystore), and stores
+  /// Parses, persists (see local_kv_store.dart for how/why), and stores
   /// [wgQuickText] as the paired config. Does not connect automatically.
   Future<void> pair(String wgQuickText) async {
     final parsed = TunnelConfig.parse(wgQuickText); // throws FormatException on bad input
-    await _secureStorage.write(key: _kStorageKey, value: wgQuickText);
+    await _store.write(_kStorageKey, wgQuickText);
     _config = parsed;
     notifyListeners();
   }
@@ -144,7 +142,7 @@ class WireGuardController extends ChangeNotifier {
     if (_status == TunnelStatus.connected || _status == TunnelStatus.connecting) {
       await disconnect();
     }
-    await _secureStorage.delete(key: _kStorageKey);
+    await _store.delete(_kStorageKey);
     _config = null;
     notifyListeners();
   }

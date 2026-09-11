@@ -1,7 +1,8 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
+
+import 'local_kv_store.dart';
 
 /// "owner/repo" this app checks releases against - matches
 /// VpsSetupConfig.githubRepoSlug's default (see vps_setup_service.dart).
@@ -10,9 +11,7 @@ const _kManifestAssetName = 'version-manifest.json';
 const _kCacheMaxAge = Duration(hours: 24);
 
 const _kCacheKey = 'update_check_cache';
-const _secureStorage = FlutterSecureStorage(
-  mOptions: MacOsOptions(usesDataProtectionKeychain: false),
-);
+final _store = LocalKvStore.instance;
 
 /// Checks GitHub's latest release for whether a newer Archangel/App/
 /// Backend version has shipped, by fetching that release's
@@ -54,12 +53,12 @@ class UpdateCheckService extends ChangeNotifier {
   bool _checking = false;
   bool get checking => _checking;
 
-  /// Restores the last cached check (if any) from secure storage, so a
+  /// Restores the last cached check (if any) from local storage, so a
   /// fresh app launch doesn't show "no update info" before the first
   /// network round trip completes.
   Future<void> loadCache() async {
     try {
-      final raw = await _secureStorage.read(key: _kCacheKey);
+      final raw = await _store.read(_kCacheKey);
       if (raw == null) return;
       final data = jsonDecode(raw) as Map<String, dynamic>;
       _latestArchangel = data['archangel'] as String?;
@@ -115,9 +114,9 @@ class UpdateCheckService extends ChangeNotifier {
       _releaseUrl = release['html_url'] as String?;
       _lastChecked = DateTime.now();
 
-      await _secureStorage.write(
-        key: _kCacheKey,
-        value: jsonEncode({
+      await _store.write(
+        _kCacheKey,
+        jsonEncode({
           'archangel': _latestArchangel,
           'frontend': _latestFrontend,
           'backend': _latestBackend,
