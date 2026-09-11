@@ -3,8 +3,10 @@ package docker
 import (
 	"bufio"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -178,21 +180,56 @@ func ContainerLogsWsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer stream.Close()
 
-	scanner := bufio.NewScanner(stream)
-	for scanner.Scan() {
-		raw := scanner.Text()
-		// Docker stream multiplex header is 8 bytes if present
-		clean := raw
-		if len(raw) > 8 {
-			clean = raw[8:]
+	// Docker Multiplex Log Protocol:
+	// Each frame starts with an 8-byte header:
+	//   header[0] = stream type (1 = stdout, 2 = stderr, 0 = stdin)
+	//   header[1..3] = 0 (reserved)
+	//   header[4..7] = uint32 big-endian payload size
+	headerBuf := make([]byte, 8)
+	reader := bufio.NewReader(stream)
+
+	for {
+		// Read 8-byte header
+		_, err := io.ReadFull(reader, headerBuf)
+		if err != nil {
+			break
 		}
 
-		ts := time.Now().Format("15:04:05")
+		streamType := headerBuf[0]
+		payloadSize := binary.BigEndian.Uint32(headerBuf[4:8])
+
+		// Bound frame size to 1MB to prevent memory exhaustion
+		if payloadSize > 1024*1024 {
+			break
+		}
+
+		payload := make([]byte, payloadSize)
+		_, err = io.ReadFull(reader, payload)
+		if err != nil {
+			break
+		}
+
+		clean := strings.TrimRight(string(payload), "\r\n")
+		if clean == "" {
+			continue
+		}
+
 		level := "INFO"
-		if strings.Contains(strings.ToUpper(clean), "WARN") {
+		if streamType == 2 {
+			level = "ERROR"
+		} else if strings.Contains(strings.ToUpper(clean), "WARN") {
 			level = "WARN"
 		} else if strings.Contains(strings.ToUpper(clean), "ERR") {
 			level = "ERROR"
+		}
+
+		ts := time.Now().Format("15:04:05")
+		// Docker with timestamps=1 outputs: 2026-09-11T09:12:34.123456789Z <message>
+		if len(clean) > 31 && clean[4] == '-' && clean[7] == '-' && (clean[10] == 'T' || clean[10] == ' ') {
+			if t, err := time.Parse(time.RFC3339Nano, strings.Replace(clean[:30], " ", "T", 1)); err == nil {
+				ts = t.Format("15:04:05")
+				clean = strings.TrimSpace(clean[30:])
+			}
 		}
 
 		entry := LogEntry{

@@ -169,9 +169,15 @@ class _CardsView extends StatelessWidget {
                 children: [
                   Row(
                     children: [
-                      Text(stack.toUpperCase(), style: AxTextStyles.mono.copyWith(fontSize: 10.5, fontWeight: FontWeight.w500, letterSpacing: 0.8, color: AxColors.fg2)),
+                      Text(
+                        stack == 'standalone' ? 'STANDALONE CONTAINERS' : stack.toUpperCase(),
+                        style: AxTextStyles.mono.copyWith(fontSize: 10.5, fontWeight: FontWeight.w500, letterSpacing: 0.8, color: AxColors.fg2),
+                      ),
                       const SizedBox(width: 9),
-                      Text(stackMeta[stack] ?? '', style: AxTextStyles.mono.copyWith(fontSize: 10, color: AxColors.fg3)),
+                      Text(
+                        stackMeta[stack] ?? (stack == 'standalone' ? 'unaffiliated with compose' : 'compose stack'),
+                        style: AxTextStyles.mono.copyWith(fontSize: 10, color: AxColors.fg3),
+                      ),
                       const SizedBox(width: 9),
                       const Expanded(child: Divider(color: AxColors.line, height: 1)),
                     ],

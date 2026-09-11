@@ -65,8 +65,21 @@ class AppState extends ChangeNotifier {
     return d;
   }
 
+  String? _pendingTerminalCommand;
+  String? get pendingTerminalCommand => _pendingTerminalCommand;
+  String? consumePendingTerminalCommand() {
+    final cmd = _pendingTerminalCommand;
+    _pendingTerminalCommand = null;
+    return cmd;
+  }
+
   void openTerminalInDir(String dir) {
     _pendingTerminalDir = dir;
+    go(AxSection.terminal);
+  }
+
+  void openTerminalWithCommand(String command) {
+    _pendingTerminalCommand = command;
     go(AxSection.terminal);
   }
 

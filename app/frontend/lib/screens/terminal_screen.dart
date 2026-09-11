@@ -28,13 +28,17 @@ class _TerminalScreenState extends State<TerminalScreen> {
     super.dispose();
   }
 
-  void _openSession(ArchangeldConnection backend, {String? initialDir}) {
-    final session = TerminalSession(label: 'shell $_nextId');
+  void _openSession(ArchangeldConnection backend, {String? initialDir, String? initialCommand, String? label}) {
+    final session = TerminalSession(label: label ?? 'shell $_nextId');
     _nextId++;
     session.connect(backend);
     if (initialDir != null && initialDir.isNotEmpty) {
       Future.delayed(const Duration(milliseconds: 600), () {
         session.sendInput('cd "$initialDir"\n');
+      });
+    } else if (initialCommand != null && initialCommand.isNotEmpty) {
+      Future.delayed(const Duration(milliseconds: 600), () {
+        session.sendInput('$initialCommand\n');
       });
     }
     setState(() {
@@ -59,6 +63,8 @@ class _TerminalScreenState extends State<TerminalScreen> {
     final app = context.watch<AppState>();
 
     final pendingDir = app.consumePendingTerminalDir();
+    final pendingCmd = app.consumePendingTerminalCommand();
+
     if (pendingDir != null && backend.isPaired) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (_sessions.isNotEmpty) {
@@ -66,6 +72,10 @@ class _TerminalScreenState extends State<TerminalScreen> {
         } else {
           _openSession(backend, initialDir: pendingDir);
         }
+      });
+    } else if (pendingCmd != null && backend.isPaired) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _openSession(backend, initialCommand: pendingCmd, label: 'exec');
       });
     }
 

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../data/app_state.dart';
 import '../models/container_model.dart';
 import '../services/archangeld_connection.dart';
 import '../services/containers_service.dart';
@@ -147,9 +148,9 @@ class _ContainerDetailScreenState extends State<ContainerDetailScreen> {
                           label: 'Shell',
                           icon: Icons.terminal_rounded,
                           onTap: () {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text('Connecting to shell: docker exec -it ${c.name} sh')),
-                            );
+                            svc.stopLogStream();
+                            Navigator.of(context).pop();
+                            context.read<AppState>().openTerminalWithCommand('docker exec -it ${c.name} sh');
                           },
                         ),
                       ],

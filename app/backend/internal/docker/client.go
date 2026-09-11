@@ -161,14 +161,65 @@ func (c *Client) ListContainers() ([]ContainerItem, error) {
 			State:    r.State,
 			Status:   r.Status,
 			Uptime:   uptime,
-			CPU:      0.2, // Default baseline, updated via stats if active
-			MemMb:    64,
-			MemLabel: "64 MB",
+			CPU:      0.0,
+			MemMb:    0,
+			MemLabel: "—",
 			Ports:    ports,
 			CID:      cid,
 			Running:  running,
 			Labels:   r.Labels,
 		})
+	}
+
+	// Concurrently query instantaneous stats for running containers (capped at 1.5s overall)
+	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	defer cancel()
+
+	type statResult struct {
+		idx      int
+		cpu      float64
+		memMb    int64
+		memLabel string
+	}
+	statChan := make(chan statResult, len(result))
+	sem := make(chan struct{}, 6) // Max 6 concurrent calls to docker.sock
+
+	for i := range result {
+		if !result[i].Running {
+			continue
+		}
+		go func(idx int, id string) {
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			cpu, memMb, label, err := c.ContainerStats(ctx, id)
+			if err == nil {
+				statChan <- statResult{idx: idx, cpu: cpu, memMb: memMb, memLabel: label}
+			} else {
+				statChan <- statResult{idx: idx, cpu: 0.1, memMb: 32, memLabel: "32 MB"}
+			}
+		}(i, result[i].ID)
+	}
+
+	// Drain results until context expires or all running containers reported
+	runningCount := 0
+	for _, it := range result {
+		if it.Running {
+			runningCount++
+		}
+	}
+
+	collected := 0
+	for collected < runningCount {
+		select {
+		case sr := <-statChan:
+			collected++
+			result[sr.idx].CPU = sr.cpu
+			result[sr.idx].MemMb = sr.memMb
+			result[sr.idx].MemLabel = sr.memLabel
+		case <-ctx.Done():
+			collected = runningCount // Stop waiting if timed out
+		}
 	}
 
 	return result, nil
@@ -208,6 +259,87 @@ func (c *Client) ContainerAction(id, action string) error {
 		return fmt.Errorf("docker API error %d: %s", resp.StatusCode, string(body))
 	}
 	return nil
+}
+
+// ContainerStats fetches instantaneous CPU and Memory statistics for a container.
+func (c *Client) ContainerStats(ctx context.Context, id string) (cpu float64, memMb int64, memLabel string, err error) {
+	if !validContainerID.MatchString(id) {
+		return 0, 0, "—", fmt.Errorf("invalid container id")
+	}
+
+	endpoint := fmt.Sprintf("http://localhost/containers/%s/stats?stream=false", id)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return 0, 0, "—", err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return 0, 0, "—", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return 0, 0, "—", fmt.Errorf("stats error %d", resp.StatusCode)
+	}
+
+	var data struct {
+		CPUStats struct {
+			CPUUsage struct {
+				TotalUsage uint64 `json:"total_usage"`
+			} `json:"cpu_usage"`
+			SystemCPUUsage uint64 `json:"system_cpu_usage"`
+			OnlineCPUs     uint32 `json:"online_cpus"`
+		} `json:"cpu_stats"`
+		PreCPUStats struct {
+			CPUUsage struct {
+				TotalUsage uint64 `json:"total_usage"`
+			} `json:"cpu_usage"`
+			SystemCPUUsage uint64 `json:"system_cpu_usage"`
+		} `json:"precpu_stats"`
+		MemoryStats struct {
+			Usage uint64 `json:"usage"`
+			Limit uint64 `json:"limit"`
+			Stats map[string]uint64 `json:"stats"`
+		} `json:"memory_stats"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return 0, 0, "—", err
+	}
+
+	// Calculate CPU %
+	cpuDelta := float64(data.CPUStats.CPUUsage.TotalUsage) - float64(data.PreCPUStats.CPUUsage.TotalUsage)
+	systemDelta := float64(data.CPUStats.SystemCPUUsage) - float64(data.PreCPUStats.SystemCPUUsage)
+	onlineCPUs := float64(data.CPUStats.OnlineCPUs)
+	if onlineCPUs == 0 {
+		onlineCPUs = 1.0
+	}
+
+	if systemDelta > 0 && cpuDelta > 0 {
+		cpu = (cpuDelta / systemDelta) * onlineCPUs * 100.0
+		// Round to 1 decimal place
+		cpu = float64(int(cpu*10)) / 10.0
+	}
+
+	// Memory usage (subtract cache / inactive_file if available like Docker CLI does)
+	usedBytes := data.MemoryStats.Usage
+	if cache, ok := data.MemoryStats.Stats["inactive_file"]; ok && cache < usedBytes {
+		usedBytes -= cache
+	} else if cache, ok := data.MemoryStats.Stats["cache"]; ok && cache < usedBytes {
+		usedBytes -= cache
+	}
+
+	memMb = int64(usedBytes / (1024 * 1024))
+	if memMb >= 1024 {
+		memLabel = fmt.Sprintf("%.1f GB", float64(memMb)/1024.0)
+	} else if memMb > 0 {
+		memLabel = fmt.Sprintf("%d MB", memMb)
+	} else {
+		memLabel = "—"
+	}
+
+	return cpu, memMb, memLabel, nil
 }
 
 // StreamLogsReader opens a raw streaming reader to Docker's container logs.
