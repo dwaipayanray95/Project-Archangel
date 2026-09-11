@@ -259,9 +259,17 @@ jobs:
         run: ./scripts/sync_version.sh
       - run: flutter build macos --release
 
-      - name: Zip the .app bundle
+      # Standard drag-and-drop installer: a DMG containing the .app next
+      # to a symlink to /Applications, so opening it shows the familiar
+      # "drag Archangel.app onto Applications" layout instead of a zip
+      # the user has to manually unpack and move.
+      - name: Create drag-and-drop DMG
         working-directory: app/frontend/build/macos/Build/Products/Release
-        run: ditto -c -k --sequesterRsrc --keepParent Archangel.app Archangel-macos.zip
+        run: |
+          mkdir -p dmg-root
+          cp -R Archangel.app dmg-root/
+          ln -s /Applications dmg-root/Applications
+          hdiutil create -volname "Archangel" -srcfolder dmg-root -ov -format UDZO Archangel-macos.dmg
 
       - uses: actions/download-artifact@v4
         with:
@@ -271,7 +279,7 @@ jobs:
         with:
           tag_name: ${{ needs.plan.outputs.tag }}
           files: |
-            app/frontend/build/macos/Build/Products/Release/Archangel-macos.zip
+            app/frontend/build/macos/Build/Products/Release/Archangel-macos.dmg
             version-manifest.json
           generate_release_notes: true
 
@@ -317,9 +325,16 @@ jobs:
         run: ./scripts/sync_version.sh
       - run: flutter build windows --release
 
-      - name: Zip the release folder
-        working-directory: app/frontend/build/windows/x64/runner/Release
-        run: Compress-Archive -Path * -DestinationPath ../../../../Archangel-windows.zip
+      # windows-2022 ships Inno Setup 6 preinstalled - builds a proper
+      # Setup.exe installer (Start Menu + optional desktop shortcut, a
+      # registered uninstaller) instead of a zip the user has to unpack
+      # and place themselves.
+      - name: Build installer with Inno Setup
+        working-directory: app/frontend/windows/installer
+        shell: pwsh
+        run: |
+          $version = "${{ needs.plan.outputs.tag }}" -replace '^v', '' -replace '-[bf]$', ''
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMyAppVersion="$version" archangel.iss
 
       - uses: actions/download-artifact@v4
         with:
@@ -329,7 +344,7 @@ jobs:
         with:
           tag_name: ${{ needs.plan.outputs.tag }}
           files: |
-            app/frontend/build/Archangel-windows.zip
+            app/frontend/windows/installer/Output/Archangel-windows-setup.exe
             version-manifest.json
           generate_release_notes: true
 

@@ -7,8 +7,12 @@ plugins {
 
 android {
     namespace = "dev.archangel.archangel"
-    compileSdk = flutter.compileSdkVersion
-    ndkVersion = flutter.ndkVersion
+    // Overridden above flutter.compileSdkVersion/ndkVersion (35 / 26.3.x) -
+    // mobile_scanner's camera-camera2-pipe dependency and several other
+    // plugins (flutter_secure_storage, local_auth_android, path_provider_android,
+    // url_launcher_android, wireguard_flutter) require compileSdk 36 / NDK 27.
+    compileSdk = 36
+    ndkVersion = "27.0.12077973"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
