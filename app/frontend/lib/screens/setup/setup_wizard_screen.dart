@@ -252,9 +252,14 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
       final backend = context.read<ArchangeldConnection>();
       await wg.pair(bundle.tunnel.toWgQuickConfig());
       await backend.pair(host: bundle.host, token: bundle.token);
-      // The app's root router watches both of these and swaps to the main
-      // shell automatically once isPaired becomes true - no manual
-      // navigation needed here.
+      if (!mounted) return;
+      // _RootRouter swaps its own body to AppShell once isPaired becomes
+      // true, but that's the bottom of this Navigator's stack - this
+      // wizard was reached via Navigator.push from SetupLandingScreen, so
+      // it stays on top of that swap until popped. Without this, the
+      // screen just sits on "Server ready" forever even though pairing
+      // fully succeeded and AppShell is already active underneath.
+      Navigator.of(context).popUntil((route) => route.isFirst);
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -318,15 +323,24 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
                     style: AxTextStyles.sans.copyWith(fontSize: 12, color: AxColors.fg2, height: 1.5),
                   ),
                   const SizedBox(height: 4),
-                  ExpansionTile(
-                    tilePadding: EdgeInsets.zero,
-                    initiallyExpanded: _firewallHelpOpen,
-                    onExpansionChanged: (v) => setState(() => _firewallHelpOpen = v),
-                    title: Text(
-                      'How do I open this port? (step-by-step)',
-                      style: AxTextStyles.sans.copyWith(fontSize: 12.5, fontWeight: FontWeight.w600, color: AxColors.warn),
-                    ),
-                    children: const [
+                  // Wrapped in its own transparent Material: ExpansionTile's
+                  // header is a ListTile, which paints its background/ink
+                  // on the nearest Material ancestor - without this it
+                  // reaches past AxCard's own opaque background (an
+                  // AnimatedContainer, not a Material) to whatever Material
+                  // is further up, which Flutter flags as a real bug (ink
+                  // effects would be invisible, hidden under AxCard's paint).
+                  Material(
+                    type: MaterialType.transparency,
+                    child: ExpansionTile(
+                      tilePadding: EdgeInsets.zero,
+                      initiallyExpanded: _firewallHelpOpen,
+                      onExpansionChanged: (v) => setState(() => _firewallHelpOpen = v),
+                      title: Text(
+                        'How do I open this port? (step-by-step)',
+                        style: AxTextStyles.sans.copyWith(fontSize: 12.5, fontWeight: FontWeight.w600, color: AxColors.warn),
+                      ),
+                      children: const [
                       _FirewallHowTo(
                         provider: 'Oracle Cloud (OCI)',
                         steps: [
@@ -365,6 +379,7 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
                         ],
                       ),
                     ],
+                    ),
                   ),
                 ],
               ),
