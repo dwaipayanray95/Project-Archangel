@@ -11,13 +11,25 @@ name: Release Archangel
 #
 # Every run publishes its artifacts to that tag's GitHub Release.
 #
-# Cut a release with:
+# Cut a release either from the CLI:
 #   git tag v1.2.3 && git push origin v1.2.3
+#
+# ...or by running this workflow manually from the Actions tab ("Run
+# workflow") and typing the tag name - that run only creates and pushes
+# the tag (see create-tag below); the resulting tag push then triggers
+# a second, normal run of this same workflow that does the actual
+# building, exactly as if you'd pushed the tag yourself from the CLI.
 
 on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to create and release (vX.Y.Z, vX.Y.Z-b backend-only, or vX.Y.Z-f frontend-only)"
+        required: true
+        type: string
 
 env:
   FLUTTER_VERSION: "3.29.3"
@@ -27,11 +39,43 @@ permissions:
   contents: write
 
 jobs:
+  # Manual-dispatch entry point: creates and pushes the tag the user
+  # typed in, then stops - it never builds anything itself. Pushing the
+  # tag fires this workflow's own `push: tags` trigger, which is what
+  # actually runs plan/build-*, so there's exactly one code path that
+  # builds a release regardless of how the tag came to exist.
+  create-tag:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate and push tag
+        run: |
+          set -euo pipefail
+          tag="${{ inputs.tag }}"
+
+          if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[bf])?$ ]]; then
+            echo "::error::Tag '$tag' doesn't match vX.Y.Z, vX.Y.Z-b, or vX.Y.Z-f."
+            exit 1
+          fi
+
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+            echo "::error::Tag $tag already exists on origin."
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "$tag" "${{ github.sha }}"
+          git push origin "$tag"
+
   # Resolves the tag suffix into per-target flags, and generates the
   # version manifest every build job publishes alongside its own
   # artifacts (see update_check_service.dart, which is what actually
   # reads this back from GitHub in the app).
   plan:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     outputs:
       backend: ${{ steps.resolve.outputs.backend }}
