@@ -108,54 +108,67 @@ class _TerminalScreenState extends State<TerminalScreen> {
           decoration: const BoxDecoration(color: AxColors.s1, border: Border(bottom: BorderSide(color: AxColors.line))),
           child: Row(
             children: [
-              for (var i = 0; i < _sessions.length; i++)
-                _TermTab(
-                  session: _sessions[i],
-                  selected: i == _tab,
-                  onTap: () => setState(() => _tab = i),
-                  onClose: () => _closeSession(i),
+              // Horizontally scrollable tab bar to prevent overflow on mobile
+              Expanded(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      for (var i = 0; i < _sessions.length; i++)
+                        _TermTab(
+                          session: _sessions[i],
+                          selected: i == _tab,
+                          onTap: () => setState(() => _tab = i),
+                          onClose: () => _closeSession(i),
+                        ),
+                      const SizedBox(width: 4),
+                      PopupMenuButton<String>(
+                        tooltip: 'New session',
+                        icon: const Icon(Icons.add_rounded, size: 16, color: AxColors.fg3),
+                        color: AxColors.s2,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8), side: const BorderSide(color: AxColors.line)),
+                        onSelected: (val) {
+                          if (val == 'shell') {
+                            _openSession(backend);
+                          } else if (val == 'tmux') {
+                            _openSession(backend, isShared: true);
+                          }
+                        },
+                        itemBuilder: (context) => [
+                          PopupMenuItem(
+                            value: 'shell',
+                            child: Row(
+                              children: [
+                                const Icon(Icons.terminal_rounded, size: 14, color: AxColors.accent),
+                                const SizedBox(width: 8),
+                                Text('Standard Shell', style: AxTextStyles.sans.copyWith(fontSize: 12, color: AxColors.fg)),
+                              ],
+                            ),
+                          ),
+                          PopupMenuItem(
+                            value: 'tmux',
+                            child: Row(
+                              children: [
+                                const Icon(Icons.hub_rounded, size: 14, color: AxColors.warn),
+                                const SizedBox(width: 8),
+                                Text('Persistent Tmux (Alive)', style: AxTextStyles.sans.copyWith(fontSize: 12, color: AxColors.fg)),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
-              const SizedBox(width: 5),
-              PopupMenuButton<String>(
-                tooltip: 'New session',
-                icon: const Icon(Icons.add_rounded, size: 16, color: AxColors.fg3),
-                color: AxColors.s2,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8), side: const BorderSide(color: AxColors.line)),
-                onSelected: (val) {
-                  if (val == 'shell') {
-                    _openSession(backend);
-                  } else if (val == 'tmux') {
-                    _openSession(backend, isShared: true);
-                  }
-                },
-                itemBuilder: (context) => [
-                  PopupMenuItem(
-                    value: 'shell',
-                    child: Row(
-                      children: [
-                        const Icon(Icons.terminal_rounded, size: 14, color: AxColors.accent),
-                        const SizedBox(width: 8),
-                        Text('Standard Shell', style: AxTextStyles.sans.copyWith(fontSize: 12, color: AxColors.fg)),
-                      ],
-                    ),
-                  ),
-                  PopupMenuItem(
-                    value: 'tmux',
-                    child: Row(
-                      children: [
-                        const Icon(Icons.hub_rounded, size: 14, color: AxColors.warn),
-                        const SizedBox(width: 8),
-                        Text('Persistent Tmux (Alive)', style: AxTextStyles.sans.copyWith(fontSize: 12, color: AxColors.fg)),
-                      ],
-                    ),
-                  ),
-                ],
               ),
-              const Spacer(),
+              const SizedBox(width: 6),
               // Quick action buttons: Copy output, clear screen
               IconButton(
                 icon: const Icon(Icons.copy_rounded, size: 13, color: AxColors.fg3),
                 tooltip: 'Copy buffer',
+                padding: const EdgeInsets.all(6),
+                constraints: const BoxConstraints(),
                 onPressed: () {
                   Clipboard.setData(ClipboardData(text: currentSession.output));
                   ScaffoldMessenger.of(context).showSnackBar(
@@ -163,16 +176,20 @@ class _TerminalScreenState extends State<TerminalScreen> {
                   );
                 },
               ),
+              const SizedBox(width: 6),
               IconButton(
                 icon: const Icon(Icons.cleaning_services_rounded, size: 13, color: AxColors.fg3),
                 tooltip: 'Clear screen',
+                padding: const EdgeInsets.all(6),
+                constraints: const BoxConstraints(),
                 onPressed: () {
                   currentSession.clearOutput();
                   currentSession.sendInput('\x0c'); // Form feed / clear
                 },
               ),
+              const SizedBox(width: 8),
               Padding(
-                padding: const EdgeInsets.only(bottom: 2, right: 4, left: 4),
+                padding: const EdgeInsets.only(bottom: 2, right: 4),
                 child: Text(backend.host ?? '', style: AxTextStyles.mono.copyWith(fontSize: 10, color: AxColors.fg3)),
               ),
             ],
@@ -238,7 +255,7 @@ class _TermTab extends StatelessWidget {
 }
 
 /// Renders one session's output, captures keystrokes, and presents
-/// a mobile accessory bar for terminal controls (Ctrl, Esc, Tab, Arrows).
+/// a mobile accessory bar with full touchscreen software keyboard input support.
 class _LivePane extends StatefulWidget {
   final TerminalSession session;
   const _LivePane({super.key, required this.session});
@@ -250,21 +267,29 @@ class _LivePane extends StatefulWidget {
 class _LivePaneState extends State<_LivePane> {
   final _scroll = ScrollController();
   final _focus = FocusNode();
-  final _inputController = TextEditingController();
+  final _mobileInputController = TextEditingController();
+  final _mobileInputFocus = FocusNode();
   bool _ctrlActive = false;
+  bool _showMobileInput = false;
 
   @override
   void dispose() {
     _scroll.dispose();
     _focus.dispose();
-    _inputController.dispose();
+    _mobileInputController.dispose();
+    _mobileInputFocus.dispose();
     super.dispose();
   }
 
-  void _scrollToBottom() {
+  void _scrollToBottomIfNeeded() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_scroll.hasClients) return;
-      _scroll.jumpTo(_scroll.position.maxScrollExtent);
+      // Only auto-scroll if user is already near the bottom (within 120 pixels)
+      final max = _scroll.position.maxScrollExtent;
+      final current = _scroll.position.pixels;
+      if (max - current <= 120 || current == 0) {
+        _scroll.jumpTo(max);
+      }
     });
   }
 
@@ -329,77 +354,94 @@ class _LivePaneState extends State<_LivePane> {
     return KeyEventResult.ignored;
   }
 
+  void _submitMobileInput() {
+    final text = _mobileInputController.text;
+    if (text.isNotEmpty) {
+      widget.session.sendInput('$text\r');
+      _mobileInputController.clear();
+    } else {
+      widget.session.sendInput('\r');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
       listenable: widget.session,
       builder: (context, _) {
-        _scrollToBottom();
+        _scrollToBottomIfNeeded();
         return Focus(
           focusNode: _focus,
           autofocus: true,
           onKeyEvent: _onKey,
-          child: GestureDetector(
-            onTap: () => _focus.requestFocus(),
-            child: Container(
-              width: double.infinity,
-              color: const Color(0xFF070807),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  // Error or Reconnect Header
-                  if (widget.session.status == SessionStatus.error || widget.session.status == SessionStatus.closed)
-                    Container(
-                      color: widget.session.status == SessionStatus.error ? AxColors.bad.withValues(alpha: 0.15) : AxColors.s2,
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                      child: Row(
-                        children: [
-                          Icon(
-                            widget.session.status == SessionStatus.error ? Icons.error_outline_rounded : Icons.info_outline_rounded,
-                            size: 14,
-                            color: widget.session.status == SessionStatus.error ? AxColors.bad : AxColors.fg2,
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              widget.session.status == SessionStatus.error
-                                  ? (widget.session.error ?? 'Connection error')
-                                  : 'Session closed (exit ${widget.session.exitCode ?? 0})',
-                              style: AxTextStyles.mono.copyWith(
-                                fontSize: 11.5,
-                                color: widget.session.status == SessionStatus.error ? AxColors.bad : AxColors.fg2,
-                              ),
+          child: Container(
+            width: double.infinity,
+            color: const Color(0xFF070807),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Error or Reconnect Header
+                if (widget.session.status == SessionStatus.error || widget.session.status == SessionStatus.closed)
+                  Container(
+                    color: widget.session.status == SessionStatus.error ? AxColors.bad.withValues(alpha: 0.15) : AxColors.s2,
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                    child: Row(
+                      children: [
+                        Icon(
+                          widget.session.status == SessionStatus.error ? Icons.error_outline_rounded : Icons.info_outline_rounded,
+                          size: 14,
+                          color: widget.session.status == SessionStatus.error ? AxColors.bad : AxColors.fg2,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            widget.session.status == SessionStatus.error
+                                ? (widget.session.error ?? 'Connection error')
+                                : 'Session closed (exit ${widget.session.exitCode ?? 0})',
+                            style: AxTextStyles.mono.copyWith(
+                              fontSize: 11.5,
+                              color: widget.session.status == SessionStatus.error ? AxColors.bad : AxColors.fg2,
                             ),
                           ),
-                          TextButton.icon(
-                            style: TextButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                              minimumSize: Size.zero,
-                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                              backgroundColor: AxColors.wash,
-                            ),
-                            icon: const Icon(Icons.refresh_rounded, size: 12, color: AxColors.accent),
-                            label: Text('Reconnect', style: AxTextStyles.sans.copyWith(fontSize: 11.5, color: AxColors.accent, fontWeight: FontWeight.bold)),
-                            onPressed: () => widget.session.reconnect(),
+                        ),
+                        TextButton.icon(
+                          style: TextButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            minimumSize: Size.zero,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            backgroundColor: AxColors.wash,
                           ),
-                        ],
-                      ),
+                          icon: const Icon(Icons.refresh_rounded, size: 12, color: AxColors.accent),
+                          label: Text('Reconnect', style: AxTextStyles.sans.copyWith(fontSize: 11.5, color: AxColors.accent, fontWeight: FontWeight.bold)),
+                          onPressed: () => widget.session.reconnect(),
+                        ),
+                      ],
                     ),
+                  ),
 
-                  if (widget.session.status == SessionStatus.connecting)
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                      child: Row(
-                        children: [
-                          const SizedBox(width: 10, height: 10, child: CircularProgressIndicator(strokeWidth: 1.5, color: AxColors.warn)),
-                          const SizedBox(width: 8),
-                          Text('connecting to shell…', style: AxTextStyles.mono.copyWith(fontSize: 11.5, color: AxColors.fg3)),
-                        ],
-                      ),
+                if (widget.session.status == SessionStatus.connecting)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                    child: Row(
+                      children: [
+                        const SizedBox(width: 10, height: 10, child: CircularProgressIndicator(strokeWidth: 1.5, color: AxColors.warn)),
+                        const SizedBox(width: 8),
+                        Text('connecting to shell…', style: AxTextStyles.mono.copyWith(fontSize: 11.5, color: AxColors.fg3)),
+                      ],
                     ),
+                  ),
 
-                  // Main Terminal Scroll Output
-                  Expanded(
+                // Main Terminal Scroll Output
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () {
+                      // Tapping canvas requests focus or prompts mobile input
+                      _focus.requestFocus();
+                      if (!_showMobileInput) {
+                        setState(() => _showMobileInput = true);
+                        _mobileInputFocus.requestFocus();
+                      }
+                    },
                     child: Padding(
                       padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
                       child: SingleChildScrollView(
@@ -413,11 +455,60 @@ class _LivePaneState extends State<_LivePane> {
                       ),
                     ),
                   ),
+                ),
 
-                  // Mobile Virtual Keyboard Accessory Bar
-                  _buildAccessoryBar(),
-                ],
-              ),
+                // Inline Mobile Direct Text Input Row (when software keyboard is engaged)
+                if (_showMobileInput)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: const BoxDecoration(
+                      color: AxColors.s2,
+                      border: Border(top: BorderSide(color: AxColors.line)),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.chevron_right_rounded, size: 16, color: AxColors.accent),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: TextField(
+                            controller: _mobileInputController,
+                            focusNode: _mobileInputFocus,
+                            autocorrect: false,
+                            enableSuggestions: false,
+                            style: AxTextStyles.mono.copyWith(fontSize: 13, color: AxColors.fg),
+                            decoration: InputDecoration(
+                              isDense: true,
+                              contentPadding: const EdgeInsets.symmetric(vertical: 4),
+                              border: InputBorder.none,
+                              hintText: 'Type command or characters…',
+                              hintStyle: AxTextStyles.mono.copyWith(fontSize: 12, color: AxColors.fg3),
+                            ),
+                            onSubmitted: (_) => _submitMobileInput(),
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.send_rounded, size: 15, color: AxColors.accent),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                          onPressed: _submitMobileInput,
+                        ),
+                        const SizedBox(width: 8),
+                        IconButton(
+                          icon: const Icon(Icons.keyboard_hide_rounded, size: 16, color: AxColors.fg3),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                          onPressed: () {
+                            _mobileInputFocus.unfocus();
+                            setState(() => _showMobileInput = false);
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+
+                // Mobile Virtual Keyboard Accessory Bar
+                _buildAccessoryBar(),
+              ],
             ),
           ),
         );
@@ -436,6 +527,17 @@ class _LivePaneState extends State<_LivePane> {
         scrollDirection: Axis.horizontal,
         child: Row(
           children: [
+            _AccessoryKey(
+              label: _showMobileInput ? 'KBD ▼' : 'KBD ▲',
+              onTap: () {
+                setState(() => _showMobileInput = !_showMobileInput);
+                if (_showMobileInput) {
+                  _mobileInputFocus.requestFocus();
+                } else {
+                  _mobileInputFocus.unfocus();
+                }
+              },
+            ),
             _AccessoryKey(label: 'ESC', onTap: () => widget.session.sendInput('\x1b')),
             _AccessoryKey(label: 'TAB', onTap: () => widget.session.sendInput('\t')),
             _AccessoryKey(

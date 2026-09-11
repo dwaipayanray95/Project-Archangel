@@ -159,12 +159,13 @@ class TerminalSession extends ChangeNotifier {
     }
   }
 
-  /// Cleans ANSI escape sequences for smooth legible display in standard text views
-  /// while preserving spacing and structure.
+  /// Cleans ANSI escape sequences and normalizes carriage returns for smooth display
   static final RegExp _ansiRegex = RegExp(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])');
   static String _cleanAnsi(String input) {
     // Strip standard ANSI CSI / OSC sequences
-    return input.replaceAll(_ansiRegex, '');
+    final stripped = input.replaceAll(_ansiRegex, '');
+    // Normalize solitary carriage returns that CLI progress indicators use so they don't corrupt rendering
+    return stripped.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
   }
 
   void sendInput(String text) {
