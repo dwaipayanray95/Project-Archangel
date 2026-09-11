@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
-import '../data/mock_data.dart';
 import '../models/file_entry.dart';
 import 'archangeld_connection.dart';
 
@@ -90,7 +89,15 @@ class FilesService extends ChangeNotifier {
     final backend = _backend;
     if (backend == null || !backend.isPaired || backend.token == null) {
       _currentPath = path;
-      _loadMockDirectory(path);
+      _listing = DirectoryListingModel(
+        path: path,
+        parent: path == '/' || path.isEmpty ? '/' : path.substring(0, path.lastIndexOf('/')),
+        entries: const [],
+        totalEntries: 0,
+        readable: false,
+        error: 'Backend is not connected',
+      );
+      _loading = false;
       notifyListeners();
       return;
     }
@@ -118,55 +125,15 @@ class FilesService extends ChangeNotifier {
         final failedListing = DirectoryListingModel.fromJson(data);
         _error = failedListing.error ?? 'Permission denied';
       } else {
-        if (!_dirCache.containsKey(path)) {
-          _currentPath = path;
-          _loadMockDirectory(path);
-        }
+        _error = 'Failed to load directory (HTTP ${res.statusCode})';
       }
     } catch (e) {
       debugPrint('Error listing directory $path: $e');
-      if (!_dirCache.containsKey(path)) {
-        _currentPath = path;
-        _loadMockDirectory(path);
-      }
+      _error = e.toString();
     } finally {
       _loading = false;
       notifyListeners();
     }
-  }
-
-  void _loadMockDirectory(String path) {
-    final mockEntries = dirs[path];
-    if (mockEntries != null) {
-      final entries = mockEntries.map((e) => FileEntryModel(
-        name: e.name,
-        path: path == '/' ? '/${e.name}' : '$path/${e.name}',
-        kind: e.kind,
-        sizeBytes: 0,
-        size: e.size,
-        perms: e.perms,
-        mtime: e.mtime,
-      )).toList();
-
-      _listing = DirectoryListingModel(
-        path: path,
-        parent: path == '/' ? '/' : path.substring(0, path.lastIndexOf('/')),
-        entries: entries,
-        totalEntries: entries.length,
-        readable: true,
-      );
-      _error = null;
-    } else {
-      _listing = DirectoryListingModel(
-        path: path,
-        parent: '/',
-        entries: const [],
-        totalEntries: 0,
-        readable: true,
-      );
-    }
-    if (path.isEmpty) _rootPath ??= '/';
-    _loading = false;
   }
 
   Future<void> openFilePreview(String path) async {
@@ -177,7 +144,18 @@ class FilesService extends ChangeNotifier {
 
     final backend = _backend;
     if (backend == null || !backend.isPaired || backend.token == null) {
-      _loadMockPreview(path);
+      _fileContent = FileContentResult(
+        path: path,
+        name: path.split('/').last,
+        sizeBytes: 0,
+        lines: const ['(Backend not paired or token missing)'],
+        lineCount: 1,
+        truncated: false,
+        isBinary: false,
+        mimeType: 'text/plain',
+      );
+      _previewLoading = false;
+      notifyListeners();
       return;
     }
 
@@ -191,31 +169,33 @@ class FilesService extends ChangeNotifier {
         final data = jsonDecode(res.body) as Map<String, dynamic>;
         _fileContent = FileContentResult.fromJson(data);
       } else {
-        _loadMockPreview(path);
+        _fileContent = FileContentResult(
+          path: path,
+          name: path.split('/').last,
+          sizeBytes: 0,
+          lines: ['Error reading file: HTTP ${res.statusCode}'],
+          lineCount: 1,
+          truncated: false,
+          isBinary: false,
+          mimeType: 'text/plain',
+        );
       }
     } catch (e) {
       debugPrint('Error reading file preview $path: $e');
-      _loadMockPreview(path);
+      _fileContent = FileContentResult(
+        path: path,
+        name: path.split('/').last,
+        sizeBytes: 0,
+        lines: ['Error reading file: $e'],
+        lineCount: 1,
+        truncated: false,
+        isBinary: false,
+        mimeType: 'text/plain',
+      );
     } finally {
       _previewLoading = false;
       notifyListeners();
     }
-  }
-
-  void _loadMockPreview(String path) {
-    final fileName = path.split('/').last;
-    final mockLines = filePreviews[fileName] ?? const ['(no preview available for this file type)'];
-    _fileContent = FileContentResult(
-      path: path,
-      name: fileName,
-      sizeBytes: 1024,
-      lines: mockLines,
-      lineCount: mockLines.length,
-      truncated: false,
-      isBinary: false,
-      mimeType: 'text/plain',
-    );
-    _previewLoading = false;
   }
 
   void closePreview() {

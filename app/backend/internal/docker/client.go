@@ -408,46 +408,16 @@ func (c *Client) StreamLogsReader(ctx context.Context, id string, tail int) (io.
 	return resp.Body, nil
 }
 
-// FallbackOverview provides standard demo stacks if Docker is not installed.
+// FallbackOverview provides empty/offline state if Docker daemon is not running or socket is missing.
 func FallbackOverview() *ContainersOverview {
-	mockContainers := []ContainerItem{
-		{Name: "caddy", Image: "caddy:2.8-alpine", Stack: "platform", State: "running", Uptime: "up 42d", CPU: 0.4, MemMb: 38, MemLabel: "38 MB", Ports: "80,443", CID: "a91f4c2e8b17", Running: true},
-		{Name: "postgres", Image: "postgres:16.3-alpine", Stack: "platform", State: "running", Uptime: "up 42d", CPU: 1.2, MemMb: 412, MemLabel: "412 MB", Ports: "5432", CID: "7d3b0af5119c", Running: true},
-		{Name: "immich-server", Image: "ghcr.io/immich-app/immich-server:v1.108", Stack: "immich", State: "running", Uptime: "up 12d", CPU: 3.8, MemMb: 1430, MemLabel: "1.4 GB", Ports: "2283", CID: "c04e7fa2d883", Running: true},
-		{Name: "immich-ml", Image: "ghcr.io/immich-app/immich-machine-learning:v1.108", Stack: "immich", State: "running", Uptime: "up 12d", CPU: 0.9, MemMb: 986, MemLabel: "986 MB", Ports: "—", CID: "e5518bb7043a", Running: true},
-		{Name: "jellyfin", Image: "jellyfin/jellyfin:10.9.7", Stack: "media", State: "running", Uptime: "up 8d", CPU: 2.1, MemMb: 604, MemLabel: "604 MB", Ports: "8096", CID: "2b6c9d1e77f4", Running: true},
-		{Name: "forgejo", Image: "codeberg.org/forgejo/forgejo:7.0", Stack: "git", State: "running", Uptime: "up 31d", CPU: 0.3, MemMb: 218, MemLabel: "218 MB", Ports: "3000,2222", CID: "f7a2130cd569", Running: true},
-		{Name: "homeassistant", Image: "ghcr.io/home-assistant/home-assistant:2026.8", Stack: "home", State: "running", Uptime: "up 19d", CPU: 1.6, MemMb: 512, MemLabel: "512 MB", Ports: "8123", CID: "9c41e6b2aa08", Running: true},
-		{Name: "grafana", Image: "grafana/grafana:11.1.0", Stack: "observability", State: "running", Uptime: "up 42d", CPU: 0.5, MemMb: 164, MemLabel: "164 MB", Ports: "3001", CID: "31d8ff70b4e2", Running: true},
-		{Name: "prometheus", Image: "prom/prometheus:v2.53.0", Stack: "observability", State: "running", Uptime: "up 42d", CPU: 0.8, MemMb: 386, MemLabel: "386 MB", Ports: "9090", CID: "ba5c2e91d370", Running: true},
-		{Name: "pgbackrest", Image: "pgbackrest/pgbackrest:2.52", Stack: "platform", State: "stopped", Uptime: "exited 6h", CPU: 0, MemMb: 0, MemLabel: "—", Ports: "—", CID: "48e0c7135b9a", Running: false},
-	}
-
-	running := 0
-	stopped := 0
-	for _, c := range mockContainers {
-		if c.Running {
-			running++
-		} else {
-			stopped++
-		}
-	}
-
 	return &ContainersOverview{
 		DockerAvailable: false,
-		EngineVersion:   "mock / docker offline",
-		RunningCount:    running,
-		StoppedCount:    stopped,
-		TotalImagesSize: "6.4 GB",
-		Containers:      mockContainers,
-		Stacks:          []string{"platform", "immich", "media", "observability", "git", "home"},
-		StackMeta: map[string]string{
-			"platform":      "caddy · postgres · pgbackrest",
-			"immich":        "compose stack · 2 services",
-			"media":         "compose stack · 1 service",
-			"observability": "compose stack · 2 services",
-			"git":           "compose stack · 1 service",
-			"home":          "compose stack · 1 service",
-		},
+		EngineVersion:   "offline / unavailable",
+		RunningCount:    0,
+		StoppedCount:    0,
+		TotalImagesSize: "0 B",
+		Containers:      []ContainerItem{},
+		Stacks:          []string{},
+		StackMeta:       map[string]string{},
 	}
 }

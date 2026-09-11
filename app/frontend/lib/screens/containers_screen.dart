@@ -112,7 +112,35 @@ class _ContainersScreenState extends State<ContainersScreen> {
             ],
           ),
           const SizedBox(height: 15),
-          if (_view == _View.cards)
+          if (containers.isEmpty)
+            AxCard(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 36),
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.view_in_ar_outlined, size: 36, color: AxColors.fg3.withValues(alpha: 0.7)),
+                    const SizedBox(height: 12),
+                    Text(
+                      overview?.dockerAvailable == false
+                          ? 'Docker daemon is offline or unreachable on host'
+                          : 'No containers running or configured on this server',
+                      style: AxTextStyles.sans.copyWith(fontSize: 14, fontWeight: FontWeight.w600, color: AxColors.fg),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      overview?.dockerAvailable == false
+                          ? 'Ensure Docker Engine is installed and the systemd unit `docker.service` is active.'
+                          : 'Launch containers via docker run, compose, or deployment scripts to view live statistics here.',
+                      style: AxTextStyles.sans.copyWith(fontSize: 12, color: AxColors.fg3),
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                ),
+              ),
+            )
+          else if (_view == _View.cards)
             _CardsView(
               containers: containers,
               stacks: overview?.stacks ?? [],

@@ -31,12 +31,12 @@ func TestContainersHandlerFallback(t *testing.T) {
 		t.Fatalf("failed decoding json: %v", err)
 	}
 
-	if len(overview.Containers) == 0 {
-		t.Errorf("expected containers in overview, got 0")
+	if overview.DockerAvailable {
+		t.Errorf("expected DockerAvailable=false in fallback, got true")
 	}
 
-	if len(overview.Stacks) == 0 {
-		t.Errorf("expected stack grouping, got 0")
+	if overview.RunningCount != 0 || overview.StoppedCount != 0 {
+		t.Errorf("expected 0 running/stopped in fallback, got %d/%d", overview.RunningCount, overview.StoppedCount)
 	}
 }
 

@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
-import '../data/mock_data.dart';
 import '../models/container_model.dart';
 import 'archangeld_connection.dart';
 
@@ -51,7 +50,17 @@ class ContainersService extends ChangeNotifier {
   Future<void> fetchContainers() async {
     final backend = _backend;
     if (backend == null || !backend.isPaired || backend.token == null) {
-      _loadMockOverview();
+      _overview = const DockerOverviewModel(
+        dockerAvailable: false,
+        engineVersion: 'disconnected',
+        runningCount: 0,
+        stoppedCount: 0,
+        totalImagesSize: '0 B',
+        containers: [],
+        stacks: [],
+        stackMeta: {},
+      );
+      _loading = false;
       notifyListeners();
       return;
     }
@@ -67,56 +76,21 @@ class ContainersService extends ChangeNotifier {
         _overview = DockerOverviewModel.fromJson(data);
         _error = null;
       } else {
-        _loadMockOverview();
+        _error = 'Failed to fetch containers (HTTP ${res.statusCode})';
       }
     } catch (e) {
       debugPrint('Error fetching docker containers: $e');
-      if (_overview == null) {
-        _loadMockOverview();
-      }
+      _error = e.toString();
     } finally {
       _loading = false;
       notifyListeners();
     }
   }
 
-  void _loadMockOverview() {
-    final mockItems = containers.map((c) => DockerContainerItem(
-      id: c.cid,
-      name: c.name,
-      image: c.image,
-      stack: c.stack,
-      state: c.state,
-      status: c.uptime,
-      uptime: c.uptime,
-      cpu: c.cpu,
-      memMb: c.memMb,
-      memLabel: c.memLabel,
-      ports: c.ports,
-      cid: c.cid,
-      running: c.running,
-    )).toList();
-
-    _overview = DockerOverviewModel(
-      dockerAvailable: false,
-      engineVersion: '27.1.1 (offline demo)',
-      runningCount: mockItems.where((c) => c.running).length,
-      stoppedCount: mockItems.where((c) => !c.running).length,
-      totalImagesSize: '6.4 GB',
-      containers: mockItems,
-      stacks: stackOrder,
-      stackMeta: stackMeta,
-    );
-    _loading = false;
-  }
-
   Future<bool> triggerAction(String containerId, String action) async {
     final backend = _backend;
     if (backend == null || !backend.isPaired || backend.token == null) {
-      // Demo simulated action
-      await Future.delayed(const Duration(milliseconds: 400));
-      fetchContainers();
-      return true;
+      return false;
     }
 
     try {
@@ -140,12 +114,13 @@ class ContainersService extends ChangeNotifier {
     notifyListeners();
 
     final backend = _backend;
-    if (backend == null || !backend.isPaired) {
-      // Fallback to mock logs
-      final mock = containerLogs[containerId] ?? containerLogs['caddy'] ?? const [];
-      for (final l in mock) {
-        _liveLogs.add(DockerLogEntry(ts: l.ts, level: l.level, source: l.source, text: l.text));
-      }
+    if (backend == null || !backend.isPaired || backend.token == null) {
+      _liveLogs.add(DockerLogEntry(
+        ts: DateTime.now().toIso8601String().substring(11, 19),
+        level: 'INFO',
+        source: 'archangeld',
+        text: 'Waiting for backend connection to stream container logs...',
+      ));
       notifyListeners();
       return;
     }

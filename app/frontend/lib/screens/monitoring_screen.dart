@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../data/mock_data.dart';
 import '../models/system_metrics.dart';
 import '../services/archangeld_connection.dart';
 import '../services/monitoring_service.dart';
@@ -297,15 +296,10 @@ class _ChartCard extends StatelessWidget {
   (String, String, String, List<double>, List<List<String>>, List<List<dynamic>>) _buildCpuData(CPUMetrics? cpu) {
     if (cpu == null) {
       return (
-        'CPU utilization', '18.4', '%',
-        const [.2, .3, .22, .4, .3, .5, .35, .4, .3, .55, .42, .38, .48, .18],
-        const [['MIN', '4%'], ['AVG', '19%'], ['MAX', '61%']],
-        const [
-          ['core 0', 0.24, AxColors.accent],
-          ['core 1', 0.31, AxColors.accent],
-          ['core 2', 0.18, AxColors.info],
-          ['core 3', 0.42, AxColors.warn],
-        ],
+        'CPU utilization', '—', '%',
+        const [0.0],
+        const [['MIN', '—'], ['AVG', '—'], ['MAX', '—']],
+        const <List<dynamic>>[],
       );
     }
 
@@ -336,15 +330,10 @@ class _ChartCard extends StatelessWidget {
   (String, String, String, List<double>, List<List<String>>, List<List<dynamic>>) _buildMemoryData(MemoryMetrics? mem) {
     if (mem == null) {
       return (
-        'Memory usage', '9.6', 'GB',
-        const [.4, .45, .5, .48, .55, .58, .6, .61],
-        const [['TOTAL', '16.0 GB'], ['AVAIL', '6.0 GB'], ['SWAP', '0.5 / 4.0 GB']],
-        const [
-          ['Apps & System', 0.38, AxColors.accent, '6.0 GB'],
-          ['Cache & Buffers', 0.22, AxColors.info, '3.6 GB'],
-          ['Free', 0.40, AxColors.fg3, '6.4 GB'],
-          ['Swap Used', 0.12, AxColors.warn, '0.5 GB / 4.0 GB'],
-        ],
+        'Memory usage', '—', 'GB',
+        const [0.0],
+        const [['TOTAL', '—'], ['AVAIL', '—'], ['SWAP', '—']],
+        const <List<dynamic>>[],
       );
     }
 
@@ -383,12 +372,10 @@ class _ChartCard extends StatelessWidget {
   (String, String, String, List<double>, List<List<String>>, List<List<dynamic>>) _buildDiskData(DiskMetrics? disk) {
     if (disk == null) {
       return (
-        'Disk throughput', '42', 'MB/s',
-        const [.1, .2, .15, .3, .25, .42],
-        const [['MIN', '2 MB/s'], ['AVG', '18 MB/s'], ['MAX', '42 MB/s']],
-        const [
-          ['/', 0.45, AxColors.accent, '280 GB avail · 214 GB used'],
-        ],
+        'Disk throughput', '—', 'MB/s',
+        const [0.0],
+        const [['MIN', '—'], ['AVG', '—'], ['MAX', '—']],
+        const <List<dynamic>>[],
       );
     }
 
@@ -418,20 +405,17 @@ class _ChartCard extends StatelessWidget {
         ['READ', '${disk.readMbPerSec.toStringAsFixed(1)} M/s'],
         ['WRITE', '${disk.writeMbPerSec.toStringAsFixed(1)} M/s'],
       ],
-      breakdown.isEmpty ? [['/', 0.42, AxColors.accent, '280 GB avail · 214 GB used']] : breakdown,
+      breakdown.isEmpty ? [['/', 0.0, AxColors.accent, '— avail · — used']] : breakdown,
     );
   }
 
   (String, String, String, List<double>, List<List<String>>, List<List<dynamic>>) _buildNetworkData(NetworkMetrics? net) {
     if (net == null) {
       return (
-        'Network throughput', '4.2', 'MB/s',
-        const [.1, .3, .2, .6, .4, .3, .5, .3],
-        const [['MIN', '0.5 M/s'], ['AVG', '2.8 M/s'], ['MAX', '4.2 M/s']],
-        const [
-          ['eth0', 0.65, AxColors.accent],
-          ['wg0', 0.35, AxColors.info],
-        ],
+        'Network throughput', '—', 'MB/s',
+        const [0.0],
+        const [['MIN', '—'], ['AVG', '—'], ['MAX', '—']],
+        const <List<dynamic>>[],
       );
     }
 
@@ -451,7 +435,7 @@ class _ChartCard extends StatelessWidget {
       'MB/s',
       hist,
       [['RX', '${net.rxMbPerSec.toStringAsFixed(1)} M/s'], ['TX', '${net.txMbPerSec.toStringAsFixed(1)} M/s'], ['TOTAL', '${net.totalMbPerSec.toStringAsFixed(1)} M/s']],
-      breakdown.isEmpty ? [['eth0', 0.5, AxColors.accent]] : breakdown,
+      breakdown.isEmpty ? [['eth0', 0.0, AxColors.accent]] : breakdown,
     );
   }
 }
@@ -492,24 +476,7 @@ class _ProcessTableState extends State<_ProcessTable> {
 
   @override
   Widget build(BuildContext context) {
-    final procsSource = widget.liveProcs.isNotEmpty
-        ? widget.liveProcs.map((p) => ProcInfo(
-              pid: p.pid,
-              name: p.name,
-              user: p.user,
-              cpu: p.cpu,
-              mem: p.mem,
-              state: p.state,
-            )).toList()
-        : procs;
-
-    // Helper map for live memory label if available
-    final liveMemMap = <int, String>{
-      for (final lp in widget.liveProcs) lp.pid: lp.memoryLabel,
-    };
-    final liveRssMap = <int, int>{
-      for (final lp in widget.liveProcs) lp.pid: lp.rssBytes,
-    };
+    final procsSource = widget.liveProcs;
 
     final filtered = (widget.query.isEmpty
         ? procsSource
@@ -529,10 +496,8 @@ class _ProcessTableState extends State<_ProcessTable> {
           case _ProcSortCol.cpu:
             cmp = a.cpu.compareTo(b.cpu);
           case _ProcSortCol.mem:
-            final rssA = liveRssMap[a.pid] ?? 0;
-            final rssB = liveRssMap[b.pid] ?? 0;
-            if (rssA > 0 || rssB > 0) {
-              cmp = rssA.compareTo(rssB);
+            if (a.rssBytes > 0 || b.rssBytes > 0) {
+              cmp = a.rssBytes.compareTo(b.rssBytes);
             } else {
               cmp = a.mem.compareTo(b.mem);
             }
@@ -576,99 +541,118 @@ class _ProcessTableState extends State<_ProcessTable> {
               ],
             ),
           ),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: SizedBox(
-              width: 700,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Container(
-                    color: AxColors.s2,
-                    padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 8),
-                    child: Row(
-                      children: [
-                        SizedBox(
-                          width: 68,
-                          child: _SortableColHead(
-                            text: 'PID',
-                            active: _sortCol == _ProcSortCol.pid,
-                            asc: _sortAsc,
-                            onTap: () => _onSort(_ProcSortCol.pid),
-                          ),
-                        ),
-                        Expanded(
-                          flex: 3,
-                          child: _SortableColHead(
-                            text: 'NAME',
-                            active: _sortCol == _ProcSortCol.name,
-                            asc: _sortAsc,
-                            onTap: () => _onSort(_ProcSortCol.name),
-                          ),
-                        ),
-                        SizedBox(
-                          width: 78,
-                          child: _SortableColHead(
-                            text: 'USER',
-                            active: _sortCol == _ProcSortCol.user,
-                            asc: _sortAsc,
-                            onTap: () => _onSort(_ProcSortCol.user),
-                          ),
-                        ),
-                        SizedBox(
-                          width: 78,
-                          child: _SortableColHead(
-                            text: 'CPU%',
-                            alignEnd: true,
-                            active: _sortCol == _ProcSortCol.cpu,
-                            asc: _sortAsc,
-                            onTap: () => _onSort(_ProcSortCol.cpu),
-                          ),
-                        ),
-                        SizedBox(
-                          width: 110,
-                          child: _SortableColHead(
-                            text: 'MEM',
-                            alignEnd: true,
-                            active: _sortCol == _ProcSortCol.mem,
-                            asc: _sortAsc,
-                            onTap: () => _onSort(_ProcSortCol.mem),
-                          ),
-                        ),
-                        const SizedBox(width: 96, child: _ColHead('', alignEnd: true)),
-                      ],
+          if (filtered.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 20),
+              child: Center(
+                child: Column(
+                  children: [
+                    const Icon(Icons.developer_board_off_outlined, size: 28, color: AxColors.fg3),
+                    const SizedBox(height: 10),
+                    Text(
+                      widget.liveProcs.isEmpty
+                          ? 'Waiting for processes telemetry from host...'
+                          : 'No processes match "${widget.query}"',
+                      style: AxTextStyles.mono.copyWith(fontSize: 12, color: AxColors.fg3),
                     ),
-                  ),
-                  for (final p in filtered)
+                  ],
+                ),
+              ),
+            )
+          else
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: SizedBox(
+                width: 700,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 7),
-                      decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: Color(0x0BE8F0E6)))),
+                      color: AxColors.s2,
+                      padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 8),
                       child: Row(
                         children: [
-                          SizedBox(width: 68, child: Text('${p.pid}', style: AxTextStyles.mono.copyWith(fontSize: 11.5, color: AxColors.fg3))),
+                          SizedBox(
+                            width: 68,
+                            child: _SortableColHead(
+                              text: 'PID',
+                              active: _sortCol == _ProcSortCol.pid,
+                              asc: _sortAsc,
+                              onTap: () => _onSort(_ProcSortCol.pid),
+                            ),
+                          ),
                           Expanded(
                             flex: 3,
-                            child: Row(
-                              children: [
-                                Container(width: 5, height: 5, decoration: BoxDecoration(color: p.state == 'R' ? AxColors.accent : AxColors.fg3, shape: BoxShape.circle)),
-                                const SizedBox(width: 7),
-                                Expanded(child: Text(p.name, style: AxTextStyles.mono.copyWith(fontSize: 11.5), overflow: TextOverflow.ellipsis)),
-                              ],
+                            child: _SortableColHead(
+                              text: 'NAME',
+                              active: _sortCol == _ProcSortCol.name,
+                              asc: _sortAsc,
+                              onTap: () => _onSort(_ProcSortCol.name),
                             ),
                           ),
-                          SizedBox(width: 78, child: Text(p.user, style: AxTextStyles.mono.copyWith(fontSize: 11, color: AxColors.fg2))),
-                          SizedBox(width: 78, child: Text('${p.cpu.toStringAsFixed(1)}%', textAlign: TextAlign.right, style: AxTextStyles.mono.copyWith(fontSize: 11.5, color: p.cpu > 5 ? AxColors.warn : AxColors.fg))),
+                          SizedBox(
+                            width: 78,
+                            child: _SortableColHead(
+                              text: 'USER',
+                              active: _sortCol == _ProcSortCol.user,
+                              asc: _sortAsc,
+                              onTap: () => _onSort(_ProcSortCol.user),
+                            ),
+                          ),
+                          SizedBox(
+                            width: 78,
+                            child: _SortableColHead(
+                              text: 'CPU%',
+                              alignEnd: true,
+                              active: _sortCol == _ProcSortCol.cpu,
+                              asc: _sortAsc,
+                              onTap: () => _onSort(_ProcSortCol.cpu),
+                            ),
+                          ),
                           SizedBox(
                             width: 110,
-                            child: Text(
-                              liveMemMap[p.pid] != null
-                                  ? '${liveMemMap[p.pid]} (${p.mem.toStringAsFixed(1)}%)'
-                                  : '${p.mem.toStringAsFixed(1)}%',
-                              textAlign: TextAlign.right,
-                              style: AxTextStyles.mono.copyWith(fontSize: 11.5, color: AxColors.fg2),
-                              overflow: TextOverflow.ellipsis,
+                            child: _SortableColHead(
+                              text: 'MEM',
+                              alignEnd: true,
+                              active: _sortCol == _ProcSortCol.mem,
+                              asc: _sortAsc,
+                              onTap: () => _onSort(_ProcSortCol.mem),
                             ),
                           ),
+                          const SizedBox(width: 96, child: _ColHead('', alignEnd: true)),
+                        ],
+                      ),
+                    ),
+                    for (final p in filtered)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 7),
+                        decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: Color(0x0BE8F0E6)))),
+                        child: Row(
+                          children: [
+                            SizedBox(width: 68, child: Text('${p.pid}', style: AxTextStyles.mono.copyWith(fontSize: 11.5, color: AxColors.fg3))),
+                            Expanded(
+                              flex: 3,
+                              child: Row(
+                                children: [
+                                  Container(width: 5, height: 5, decoration: BoxDecoration(color: p.state == 'R' ? AxColors.accent : AxColors.fg3, shape: BoxShape.circle)),
+                                  const SizedBox(width: 7),
+                                  Expanded(child: Text(p.name, style: AxTextStyles.mono.copyWith(fontSize: 11.5), overflow: TextOverflow.ellipsis)),
+                                ],
+                              ),
+                            ),
+                            SizedBox(width: 78, child: Text(p.user, style: AxTextStyles.mono.copyWith(fontSize: 11, color: AxColors.fg2))),
+                            SizedBox(width: 78, child: Text('${p.cpu.toStringAsFixed(1)}%', textAlign: TextAlign.right, style: AxTextStyles.mono.copyWith(fontSize: 11.5, color: p.cpu > 5 ? AxColors.warn : AxColors.fg))),
+                            SizedBox(
+                              width: 110,
+                              child: Text(
+                                p.rssBytes > 0
+                                    ? '${p.memoryLabel} (${p.mem.toStringAsFixed(1)}%)'
+                                    : '${p.mem.toStringAsFixed(1)}%',
+                                textAlign: TextAlign.right,
+                                style: AxTextStyles.mono.copyWith(fontSize: 11.5, color: AxColors.fg2),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
                           SizedBox(
                             width: 96,
                             child: Row(
@@ -700,7 +684,7 @@ class _ProcessTableState extends State<_ProcessTable> {
     );
   }
 
-  void _showKillDialog(BuildContext context, ProcInfo proc) {
+  void _showKillDialog(BuildContext context, LiveProcessInfo proc) {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -755,7 +739,7 @@ class _ProcessTableState extends State<_ProcessTable> {
     );
   }
 
-  void _showReniceDialog(BuildContext context, ProcInfo proc) {
+  void _showReniceDialog(BuildContext context, LiveProcessInfo proc) {
     int selectedPrio = 0;
     showDialog(
       context: context,

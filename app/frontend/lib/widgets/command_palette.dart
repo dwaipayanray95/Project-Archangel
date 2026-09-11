@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../data/app_state.dart';
-import '../data/mock_data.dart';
+import '../services/containers_service.dart';
 import '../theme/tokens.dart';
 
 class _PaletteItem {
@@ -33,13 +33,15 @@ class _CommandPaletteState extends State<CommandPalette> {
   @override
   Widget build(BuildContext context) {
     final app = context.read<AppState>();
+    final contSvc = context.watch<ContainersService>();
 
     final sections = <_PaletteItem>[
       for (final s in AxSection.values)
         _PaletteItem(label: axSectionLabels[s]!, sub: 'Jump to section', icon: Icons.arrow_forward_rounded, go: () => app.go(s)),
     ];
+    final liveContainers = contSvc.overview?.containers ?? [];
     final containerItems = <_PaletteItem>[
-      for (final c in containers.take(4))
+      for (final c in liveContainers.take(4))
         _PaletteItem(label: c.name, sub: c.image, icon: Icons.view_in_ar_outlined, go: () => app.go(AxSection.containers)),
     ];
 
