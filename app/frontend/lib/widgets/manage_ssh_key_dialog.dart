@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 
-import '../services/local_auth_service.dart';
 import '../services/ssh_credentials.dart';
 import '../theme/tokens.dart';
+import 'pin_prompt_dialog.dart';
 
 /// Lets the user view/replace/forget the SSH key "Remember this key"
 /// saved (from the setup wizard or BackendUpdateDialog), without having
@@ -48,27 +48,35 @@ class _ManageSshKeyDialogState extends State<ManageSshKeyDialog> {
       return;
     }
 
-    final authorized = await LocalAuthService().authenticate('Unlock your saved SSH key');
+    final pin = await promptForPin(context, title: 'Enter PIN', message: 'Enter the PIN that protects your saved SSH key.');
     if (!mounted) return;
-    if (!authorized) {
+    if (pin == null) {
       setState(() {
         _loading = false;
-        _error = 'Authentication was cancelled - showing an empty form instead of the saved key.';
+        _error = 'Cancelled - showing an empty form instead of the saved key.';
       });
       return;
     }
 
-    final creds = await loadSavedSshCredentials();
-    if (!mounted) return;
-    setState(() {
-      if (creds != null) {
-        _hostController.text = creds.host;
-        _usernameController.text = creds.username;
-        _privateKeyController.text = creds.privateKeyPem;
-        _hadSavedKey = true;
-      }
-      _loading = false;
-    });
+    try {
+      final creds = await loadSavedSshCredentials(pin);
+      if (!mounted) return;
+      setState(() {
+        if (creds != null) {
+          _hostController.text = creds.host;
+          _usernameController.text = creds.username;
+          _privateKeyController.text = creds.privateKeyPem;
+          _hadSavedKey = true;
+        }
+        _loading = false;
+      });
+    } on WrongPinException {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = 'Incorrect PIN - showing an empty form instead of the saved key.';
+      });
+    }
   }
 
   @override
@@ -88,12 +96,20 @@ class _ManageSshKeyDialogState extends State<ManageSshKeyDialog> {
       return;
     }
 
+    final pin = await promptForPin(
+      context,
+      title: 'Set a PIN',
+      message: 'Choose a PIN to protect this key. You\'ll need it to unlock the key later - there\'s no way to recover it without the PIN.',
+      confirm: true,
+    );
+    if (!mounted || pin == null) return;
+
     setState(() {
       _saving = true;
       _error = null;
     });
 
-    await saveSshCredentials(SavedSshCredentials(host: host, username: username, privateKeyPem: privateKey));
+    await saveSshCredentials(pin, SavedSshCredentials(host: host, username: username, privateKeyPem: privateKey));
     if (!mounted) return;
     Navigator.of(context).pop();
   }

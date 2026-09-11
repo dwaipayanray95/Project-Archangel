@@ -41,9 +41,10 @@ dependencies:
   web_socket_channel: ^3.0.3
   mobile_scanner: ^7.4.0
   dartssh2: ^4.0.1
-  local_auth: ^2.3.0
   http: ^1.2.0
   url_launcher: ^6.3.1
+  cryptography: ^2.7.0
+  path_provider: ^2.1.4
 
 dev_dependencies:
   flutter_test:

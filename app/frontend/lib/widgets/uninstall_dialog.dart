@@ -2,13 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../services/archangeld_connection.dart';
-import '../services/local_auth_service.dart';
 import '../services/ssh_credentials.dart';
 import '../services/ssh_transport.dart';
 import '../services/vps_setup_service.dart';
 import '../services/wireguard_controller.dart';
 import '../theme/tokens.dart';
 import 'host_key_dialog.dart';
+import 'pin_prompt_dialog.dart';
 
 /// Shown when the user taps "Uninstall backend" in Settings. Tears down
 /// archangeld and WireGuard on the paired server entirely - see
@@ -60,22 +60,27 @@ class _UninstallDialogState extends State<UninstallDialog> {
       setState(() => _loadingSavedKey = false);
       return;
     }
-    final authorized = await LocalAuthService().authenticate('Unlock your saved SSH key');
+    final pin = await promptForPin(context, title: 'Enter PIN', message: 'Enter the PIN that protects your saved SSH key.');
     if (!mounted) return;
-    if (!authorized) {
+    if (pin == null) {
       setState(() => _loadingSavedKey = false);
       return;
     }
-    final creds = await loadSavedSshCredentials();
-    if (!mounted) return;
-    setState(() {
-      if (creds != null) {
-        _hostController.text = creds.host;
-        _usernameController.text = creds.username;
-        _privateKeyController.text = creds.privateKeyPem;
-      }
-      _loadingSavedKey = false;
-    });
+    try {
+      final creds = await loadSavedSshCredentials(pin);
+      if (!mounted) return;
+      setState(() {
+        if (creds != null) {
+          _hostController.text = creds.host;
+          _usernameController.text = creds.username;
+          _privateKeyController.text = creds.privateKeyPem;
+        }
+        _loadingSavedKey = false;
+      });
+    } on WrongPinException {
+      if (!mounted) return;
+      setState(() => _loadingSavedKey = false);
+    }
   }
 
   @override

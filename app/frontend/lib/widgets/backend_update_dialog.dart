@@ -2,13 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../services/archangeld_connection.dart';
-import '../services/local_auth_service.dart';
 import '../services/ssh_credentials.dart';
 import '../services/ssh_transport.dart';
 import '../services/update_check_service.dart';
 import '../services/vps_setup_service.dart';
 import '../theme/tokens.dart';
 import 'host_key_dialog.dart';
+import 'pin_prompt_dialog.dart';
 
 /// Shown when the user taps "Update now" on the Backend row in Settings.
 /// Updates an already-set-up server's archangeld to the version named by
@@ -68,23 +68,28 @@ class _BackendUpdateDialogState extends State<BackendUpdateDialog> {
       setState(() => _loadingSavedKey = false);
       return;
     }
-    final authorized = await LocalAuthService().authenticate('Unlock your saved SSH key');
+    final pin = await promptForPin(context, title: 'Enter PIN', message: 'Enter the PIN that protects your saved SSH key.');
     if (!mounted) return;
-    if (!authorized) {
+    if (pin == null) {
       setState(() => _loadingSavedKey = false);
       return;
     }
-    final creds = await loadSavedSshCredentials();
-    if (!mounted) return;
-    setState(() {
-      if (creds != null) {
-        _hostController.text = creds.host;
-        _usernameController.text = creds.username;
-        _privateKeyController.text = creds.privateKeyPem;
-        _rememberKey = true;
-      }
-      _loadingSavedKey = false;
-    });
+    try {
+      final creds = await loadSavedSshCredentials(pin);
+      if (!mounted) return;
+      setState(() {
+        if (creds != null) {
+          _hostController.text = creds.host;
+          _usernameController.text = creds.username;
+          _privateKeyController.text = creds.privateKeyPem;
+          _rememberKey = true;
+        }
+        _loadingSavedKey = false;
+      });
+    } on WrongPinException {
+      if (!mounted) return;
+      setState(() => _loadingSavedKey = false);
+    }
   }
 
   @override
@@ -133,7 +138,15 @@ class _BackendUpdateDialogState extends State<BackendUpdateDialog> {
       );
 
       if (_rememberKey) {
-        await saveSshCredentials(SavedSshCredentials(host: host, username: username, privateKeyPem: privateKey));
+        final pin = await promptForPin(
+          context,
+          title: 'Set a PIN',
+          message: 'Choose a PIN to protect this key. You\'ll need it to unlock the key later - there\'s no way to recover it without the PIN.',
+          confirm: true,
+        );
+        if (pin != null) {
+          await saveSshCredentials(pin, SavedSshCredentials(host: host, username: username, privateKeyPem: privateKey));
+        }
       } else {
         await clearSavedSshCredentials();
       }

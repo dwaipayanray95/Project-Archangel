@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../services/archangeld_connection.dart';
-import '../../services/local_auth_service.dart';
 import '../../services/pairing_bundle.dart';
 import '../../services/ssh_credentials.dart';
 import '../../services/ssh_transport.dart';
@@ -14,6 +13,7 @@ import '../../theme/tokens.dart';
 import '../../widgets/archangel_mark.dart';
 import '../../widgets/ax_widgets.dart';
 import '../../widgets/host_key_dialog.dart';
+import '../../widgets/pin_prompt_dialog.dart';
 
 /// The in-app "zero-SSH-by-hand" first-run wizard: connect → progress →
 /// done. See lib/services/vps_setup_service.dart for what actually runs
@@ -79,23 +79,26 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
   Future<void> _restoreSavedKey() async {
     if (!await hasSavedSshCredentials()) return;
 
-    // Gate reading the actual key value behind an OS-level re-auth
-    // prompt - it grants root on the VPS, so a device left unlocked
-    // shouldn't hand it over just by opening this screen. Degrades to
-    // "allow" on platforms/devices with nothing enrolled - see
-    // LocalAuthService's own doc comment for why that's not a
-    // regression.
-    final authorized = await LocalAuthService().authenticate('Unlock your saved SSH key');
-    if (!mounted || !authorized) return;
+    // Gate reading the actual key value behind the PIN that protects it
+    // - it grants root on the VPS, so a device left unlocked shouldn't
+    // hand it over just by opening this screen. The PIN isn't just a
+    // gate here, it's the decryption key itself (see
+    // credential_crypto.dart) - there's no way to "allow" without it.
+    final pin = await promptForPin(context, title: 'Enter PIN', message: 'Enter the PIN that protects your saved SSH key.');
+    if (!mounted || pin == null) return;
 
-    final creds = await loadSavedSshCredentials();
-    if (!mounted || creds == null) return;
-    setState(() {
-      _hostController.text = creds.host;
-      _usernameController.text = creds.username;
-      _privateKeyController.text = creds.privateKeyPem;
-      _rememberKey = true;
-    });
+    try {
+      final creds = await loadSavedSshCredentials(pin);
+      if (!mounted || creds == null) return;
+      setState(() {
+        _hostController.text = creds.host;
+        _usernameController.text = creds.username;
+        _privateKeyController.text = creds.privateKeyPem;
+        _rememberKey = true;
+      });
+    } on WrongPinException {
+      // Wrong PIN - leave the form empty, same as "no saved key".
+    }
   }
 
   @override
@@ -144,7 +147,15 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
       );
 
       if (_rememberKey) {
-        await saveSshCredentials(SavedSshCredentials(host: host, username: username, privateKeyPem: privateKey));
+        final pin = await promptForPin(
+          context,
+          title: 'Set a PIN',
+          message: 'Choose a PIN to protect this key. You\'ll need it to unlock the key later - there\'s no way to recover it without the PIN.',
+          confirm: true,
+        );
+        if (pin != null) {
+          await saveSshCredentials(pin, SavedSshCredentials(host: host, username: username, privateKeyPem: privateKey));
+        }
       } else {
         await clearSavedSshCredentials();
       }
