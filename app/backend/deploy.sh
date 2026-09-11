@@ -70,15 +70,23 @@ echo "==> [3/7] Ensuring the server user + directories exist"
 ssh_cmd bash <<'REMOTE'
 set -e
 if id archangel > /dev/null 2>&1; then
-  echo "    archangel system user already exists - skipping."
+  echo "    archangel system user already exists."
+  # Ensure home directory exists if user was created earlier without one
+  sudo mkdir -p /home/archangel
+  sudo chown archangel:archangel /home/archangel
+  sudo usermod -d /home/archangel -s /bin/bash archangel || true
 else
-  sudo useradd --system --no-create-home --shell /usr/sbin/nologin archangel
-  echo "    Created archangel system user."
+  sudo useradd --system --create-home --home-dir /home/archangel --shell /bin/bash archangel
+  echo "    Created archangel system user with home /home/archangel."
 fi
 sudo mkdir -p /opt/archangel /etc/archangel
 sudo chown root:archangel /etc/archangel
 sudo chmod 750 /etc/archangel
-echo "    Directories ready."
+
+# Hybrid Cockpit: grant passwordless sudo to archangel user
+echo "archangel ALL=(ALL) NOPASSWD: ALL" | sudo tee /etc/sudoers.d/archangel > /dev/null
+sudo chmod 440 /etc/sudoers.d/archangel
+echo "    Sudoers configuration and directories ready."
 REMOTE
 echo ""
 

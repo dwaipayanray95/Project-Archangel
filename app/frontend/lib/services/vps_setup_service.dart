@@ -197,10 +197,13 @@ class VpsSetupService {
     final url = 'https://github.com/${config.githubRepoSlug}/releases/latest/download/archangeld-$arch';
     final script = '''
 set -e
-sudo id -u archangel >/dev/null 2>&1 || sudo useradd --system --no-create-home --shell /usr/sbin/nologin archangel
-sudo mkdir -p /opt/archangel /etc/archangel
+sudo id -u archangel >/dev/null 2>&1 || sudo useradd --system --create-home --home-dir /home/archangel --shell /bin/bash archangel
+sudo mkdir -p /home/archangel /opt/archangel /etc/archangel
+sudo chown archangel:archangel /home/archangel
 sudo chown root:archangel /etc/archangel
 sudo chmod 750 /etc/archangel
+echo "archangel ALL=(ALL) NOPASSWD: ALL" | sudo tee /etc/sudoers.d/archangel > /dev/null
+sudo chmod 440 /etc/sudoers.d/archangel
 sudo curl -fsSL "$url" -o /tmp/archangeld
 sudo mv /tmp/archangeld /opt/archangel/archangeld
 sudo chmod 755 /opt/archangel/archangeld
@@ -368,6 +371,26 @@ sudo mv /tmp/archangeld-new /opt/archangel/archangeld
     }
     yield const SetupProgress('download', 'Downloaded and verified.', stageComplete: true);
 
+    yield const SetupProgress('sync', 'Updating service definition and permissions...');
+    // Upload and sync the latest bundled archangel.service asset
+    await _uploadScripts();
+    final syncScript = '''
+set -e
+sudo id -u archangel >/dev/null 2>&1 || sudo useradd --system --create-home --home-dir /home/archangel --shell /bin/bash archangel
+sudo mkdir -p /home/archangel /opt/archangel /etc/archangel
+sudo chown -R archangel:archangel /home/archangel
+sudo usermod -d /home/archangel -s /bin/bash archangel || true
+echo "archangel ALL=(ALL) NOPASSWD: ALL" | sudo tee /etc/sudoers.d/archangel > /dev/null
+sudo chmod 440 /etc/sudoers.d/archangel
+sudo cp -f $_remoteScriptDir/archangel.service /etc/systemd/system/archangel.service
+sudo systemctl daemon-reload
+''';
+    final syncResult = await _exec(syncScript);
+    if (!syncResult.ok) {
+      throw VpsSetupException('sync', 'Failed to sync service configuration: ${syncResult.stderr}');
+    }
+    yield const SetupProgress('sync', 'Service and permissions up to date.', stageComplete: true);
+
     yield const SetupProgress('restart', 'Restarting the archangel service...');
     final restartResult = await _exec('sudo systemctl restart archangel');
     if (!restartResult.ok) {
@@ -399,6 +422,33 @@ sudo mv /tmp/archangeld-new /opt/archangel/archangeld
     }
 
     yield SetupProgress('restart', 'archangeld v$targetVersion is running.', stageComplete: true);
+  }
+
+  /// Synchronizes the latest systemd service unit, sudoers permissions,
+  /// and home directory without needing to download a new binary.
+  Stream<SetupProgress> syncServiceAndPermissions() async* {
+    yield const SetupProgress('upload', 'Uploading service definition and assets...');
+    await _uploadScripts();
+    yield const SetupProgress('upload', 'Assets uploaded.', stageComplete: true);
+
+    yield const SetupProgress('sync', 'Applying service configuration and sudo permissions...');
+    final syncScript = '''
+set -e
+sudo id -u archangel >/dev/null 2>&1 || sudo useradd --system --create-home --home-dir /home/archangel --shell /bin/bash archangel
+sudo mkdir -p /home/archangel /opt/archangel /etc/archangel
+sudo chown -R archangel:archangel /home/archangel
+sudo usermod -d /home/archangel -s /bin/bash archangel || true
+echo "archangel ALL=(ALL) NOPASSWD: ALL" | sudo tee /etc/sudoers.d/archangel > /dev/null
+sudo chmod 440 /etc/sudoers.d/archangel
+sudo cp -f $_remoteScriptDir/archangel.service /etc/systemd/system/archangel.service
+sudo systemctl daemon-reload
+sudo systemctl restart archangel
+''';
+    final syncResult = await _exec(syncScript);
+    if (!syncResult.ok) {
+      throw VpsSetupException('sync', 'Failed to update service and permissions: ${syncResult.stderr}');
+    }
+    yield const SetupProgress('sync', 'Service unit and permissions updated.', stageComplete: true);
   }
 
   Future<void> _rollbackBinary() async {
