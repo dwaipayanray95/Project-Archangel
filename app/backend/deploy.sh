@@ -136,7 +136,7 @@ else
 bind_addr: \"$WG_BIND_ADDR\"
 port: $PORT
 token_hash: \"$TOKEN_HASH\"
-files_root: \"\"
+files_root: \"/home/archangel\"
 CONF
 sudo chown root:archangel /etc/archangel/config.yaml
 sudo chmod 640 /etc/archangel/config.yaml"

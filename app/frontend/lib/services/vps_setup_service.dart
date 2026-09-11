@@ -238,7 +238,7 @@ sudo chown root:root /opt/archangel/archangeld
 bind_addr: "$wgServerIp"
 port: ${config.appPort}
 public_endpoint: "$publicIp:${config.wgPort}"
-files_root: ""
+files_root: "/home/archangel"
 ''';
 
     // Uploaded via SFTP (raw bytes, no shell parsing of the content at
@@ -441,6 +441,14 @@ sudo usermod -d /home/archangel -s /bin/bash archangel || true
 echo "archangel ALL=(ALL) NOPASSWD: ALL" | sudo tee /etc/sudoers.d/archangel > /dev/null
 sudo chmod 440 /etc/sudoers.d/archangel
 sudo cp -f $_remoteScriptDir/archangel.service /etc/systemd/system/archangel.service
+
+# If config.yaml has empty files_root, update it to /home/archangel
+if [ -f /etc/archangel/config.yaml ]; then
+  if grep -q 'files_root: ""' /etc/archangel/config.yaml || grep -q "files_root: ''" /etc/archangel/config.yaml; then
+    sudo sed -i 's|files_root: .*|files_root: "/home/archangel"|' /etc/archangel/config.yaml
+  fi
+fi
+
 sudo systemctl daemon-reload
 sudo systemctl restart archangel
 ''';

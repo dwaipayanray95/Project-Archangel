@@ -58,12 +58,22 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := files.SetRoot(cfg.FilesRoot); err != nil {
+	filesRoot := cfg.FilesRoot
+	if filesRoot == "" {
+		// In Hybrid Cockpit model, /home/archangel is the unified user workspace.
+		if info, err := os.Stat("/home/archangel"); err == nil && info.IsDir() {
+			filesRoot = "/home/archangel"
+		}
+	}
+
+	if err := files.SetRoot(filesRoot); err != nil {
 		slog.Error("failed to set up file browser root", "err", err)
 		os.Exit(1)
 	}
-	if cfg.FilesRoot == "" {
+	if filesRoot == "" {
 		slog.Warn("files_root is not set - the Files tab will reject every request until it is")
+	} else {
+		slog.Info("file browser root configured", "root", files.Root())
 	}
 
 	store, err := tokenstore.Load(cfg.TokenStorePath)
