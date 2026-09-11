@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
-import '../data/mock_data.dart';
+import 'package:provider/provider.dart';
+import '../models/container_model.dart';
+import '../services/archangeld_connection.dart';
+import '../services/containers_service.dart';
 import '../theme/tokens.dart';
 import '../widgets/ax_widgets.dart';
 import 'container_detail_screen.dart';
@@ -16,14 +19,29 @@ class ContainersScreen extends StatefulWidget {
 class _ContainersScreenState extends State<ContainersScreen> {
   _View _view = _View.cards;
 
-  void _openDetail(ContainerInfo c) {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final backend = context.read<ArchangeldConnection>();
+      context.read<ContainersService>().init(backend);
+    });
+  }
+
+  void _openDetail(DockerContainerItem c) {
     Navigator.of(context).push(MaterialPageRoute(builder: (_) => ContainerDetailScreen(container: c)));
   }
 
   @override
   Widget build(BuildContext context) {
-    final running = containers.where((c) => c.running).length;
-    final stopped = containers.length - running;
+    final svc = context.watch<ContainersService>();
+    final overview = svc.overview;
+
+    final containers = overview?.containers ?? [];
+    final running = overview?.runningCount ?? containers.where((c) => c.running).length;
+    final stopped = overview?.stoppedCount ?? (containers.length - running);
+    final version = overview?.engineVersion ?? 'docker';
+    final imagesSize = overview?.totalImagesSize ?? '—';
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(18),
@@ -38,9 +56,25 @@ class _ContainersScreenState extends State<ContainersScreen> {
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Containers', style: AxTextStyles.h1),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text('Containers', style: AxTextStyles.h1),
+                      if (svc.loading) ...[
+                        const SizedBox(width: 8),
+                        const SizedBox(
+                          width: 12,
+                          height: 12,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: AxColors.accent),
+                        ),
+                      ],
+                    ],
+                  ),
                   const SizedBox(height: 3),
-                  Text('docker 27.1.1 · $running running · $stopped stopped · 6.4 GB images', style: AxTextStyles.mutedMono),
+                  Text(
+                    'docker $version · $running running · $stopped stopped · $imagesSize images',
+                    style: AxTextStyles.mutedMono,
+                  ),
                 ],
               ),
               Row(
@@ -53,16 +87,24 @@ class _ContainersScreenState extends State<ContainersScreen> {
                     onSelect: (v) => setState(() => _view = v),
                   ),
                   const SizedBox(width: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 6),
-                    decoration: BoxDecoration(color: AxColors.wash, borderRadius: BorderRadius.circular(AxRadius.pill), border: Border.all(color: AxColors.accent.withValues(alpha: 0.22))),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(Icons.download_rounded, size: 12, color: AxColors.accent),
-                        const SizedBox(width: 6),
-                        Text('Pull image', style: AxTextStyles.sans.copyWith(fontSize: 11.5, fontWeight: FontWeight.w700, color: AxColors.accent)),
-                      ],
+                  InkWell(
+                    borderRadius: BorderRadius.circular(AxRadius.pill),
+                    onTap: () => svc.fetchContainers(),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: AxColors.wash,
+                        borderRadius: BorderRadius.circular(AxRadius.pill),
+                        border: Border.all(color: AxColors.accent.withValues(alpha: 0.22)),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.refresh_rounded, size: 12, color: AxColors.accent),
+                          const SizedBox(width: 6),
+                          Text('Refresh', style: AxTextStyles.sans.copyWith(fontSize: 11.5, fontWeight: FontWeight.w700, color: AxColors.accent)),
+                        ],
+                      ),
                     ),
                   ),
                 ],
@@ -70,7 +112,26 @@ class _ContainersScreenState extends State<ContainersScreen> {
             ],
           ),
           const SizedBox(height: 15),
-          if (_view == _View.cards) _CardsView(onOpen: _openDetail) else _TableView(onOpen: _openDetail),
+          if (_view == _View.cards)
+            _CardsView(
+              containers: containers,
+              stacks: overview?.stacks ?? [],
+              stackMeta: overview?.stackMeta ?? {},
+              onOpen: _openDetail,
+            )
+          else
+            _TableView(
+              containers: containers,
+              onOpen: _openDetail,
+              onAction: (c, action) async {
+                final success = await svc.triggerAction(c.id, action);
+                if (context.mounted && !success) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Failed to $action container ${c.name}')),
+                  );
+                }
+              },
+            ),
         ],
       ),
     );
@@ -78,15 +139,28 @@ class _ContainersScreenState extends State<ContainersScreen> {
 }
 
 class _CardsView extends StatelessWidget {
-  final ValueChanged<ContainerInfo> onOpen;
-  const _CardsView({required this.onOpen});
+  final List<DockerContainerItem> containers;
+  final List<String> stacks;
+  final Map<String, String> stackMeta;
+  final ValueChanged<DockerContainerItem> onOpen;
+
+  const _CardsView({
+    required this.containers,
+    required this.stacks,
+    required this.stackMeta,
+    required this.onOpen,
+  });
 
   @override
   Widget build(BuildContext context) {
+    final effectiveStacks = stacks.isNotEmpty
+        ? stacks
+        : containers.map((c) => c.stack).toSet().toList();
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        for (final stack in stackOrder)
+        for (final stack in effectiveStacks)
           if (containers.any((c) => c.stack == stack))
             Padding(
               padding: const EdgeInsets.only(bottom: 15),
@@ -106,7 +180,7 @@ class _CardsView extends StatelessWidget {
                   LayoutBuilder(
                     builder: (context, c) {
                       final cols = c.maxWidth >= 900 ? 3 : (c.maxWidth >= 560 ? 2 : 1);
-                      final items = containers.where((c) => c.stack == stack).toList();
+                      final items = containers.where((item) => item.stack == stack).toList();
                       return GridView.count(
                         crossAxisCount: cols,
                         shrinkWrap: true,
@@ -127,7 +201,7 @@ class _CardsView extends StatelessWidget {
 }
 
 class _ContainerCard extends StatelessWidget {
-  final ContainerInfo c;
+  final DockerContainerItem c;
   final VoidCallback onTap;
   const _ContainerCard({required this.c, required this.onTap});
 
@@ -146,7 +220,7 @@ class _ContainerCard extends StatelessWidget {
               StatusDot(color: dot, size: 7, pulse: c.running),
               const SizedBox(width: 8),
               Expanded(child: Text(c.name, style: AxTextStyles.mono.copyWith(fontSize: 12.5, fontWeight: FontWeight.w500), overflow: TextOverflow.ellipsis)),
-              AxPill(text: c.running ? c.uptime : c.uptime, color: dot),
+              AxPill(text: c.running ? c.uptime : (c.uptime.isNotEmpty ? c.uptime : 'stopped'), color: dot),
             ],
           ),
           const SizedBox(height: 3),
@@ -192,8 +266,15 @@ class _MiniMeter extends StatelessWidget {
 }
 
 class _TableView extends StatelessWidget {
-  final ValueChanged<ContainerInfo> onOpen;
-  const _TableView({required this.onOpen});
+  final List<DockerContainerItem> containers;
+  final ValueChanged<DockerContainerItem> onOpen;
+  final void Function(DockerContainerItem, String) onAction;
+
+  const _TableView({
+    required this.containers,
+    required this.onOpen,
+    required this.onAction,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -248,11 +329,20 @@ class _TableView extends StatelessWidget {
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.end,
                             children: [
-                              _IconBtn(icon: c.running ? Icons.stop_rounded : Icons.play_arrow_rounded),
+                              _IconBtn(
+                                icon: c.running ? Icons.stop_rounded : Icons.play_arrow_rounded,
+                                onTap: () => onAction(c, c.running ? 'stop' : 'start'),
+                              ),
                               const SizedBox(width: 4),
-                              _IconBtn(icon: Icons.restart_alt_rounded),
+                              _IconBtn(
+                                icon: Icons.restart_alt_rounded,
+                                onTap: () => onAction(c, 'restart'),
+                              ),
                               const SizedBox(width: 4),
-                              _IconBtn(icon: Icons.chevron_right_rounded),
+                              _IconBtn(
+                                icon: Icons.chevron_right_rounded,
+                                onTap: () => onOpen(c),
+                              ),
                             ],
                           ),
                         ),
@@ -270,15 +360,19 @@ class _TableView extends StatelessWidget {
 
 class _IconBtn extends StatelessWidget {
   final IconData icon;
-  const _IconBtn({required this.icon});
+  final VoidCallback? onTap;
+  const _IconBtn({required this.icon, this.onTap});
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 24,
-      height: 24,
-      decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: AxColors.line)),
-      child: Icon(icon, size: 13, color: AxColors.fg2),
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 24,
+        height: 24,
+        decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: AxColors.line)),
+        child: Icon(icon, size: 13, color: AxColors.fg2),
+      ),
     );
   }
 }

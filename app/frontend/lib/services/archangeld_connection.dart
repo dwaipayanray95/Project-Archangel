@@ -175,4 +175,28 @@ class ArchangeldConnection extends ChangeNotifier {
     }
     return Uri.parse('http://$_host/api/v1/files/download').replace(queryParameters: {'path': path});
   }
+
+  /// `http://<host>/api/v1/docker/containers`
+  Uri dockerContainersHttpUri() {
+    if (!isPaired) {
+      throw StateError('Not paired with a backend');
+    }
+    return Uri.parse('http://$_host/api/v1/docker/containers');
+  }
+
+  /// `http://<host>/api/v1/docker/containers/{id}/{action}`
+  Uri dockerContainerActionHttpUri(String id, String action) {
+    if (!isPaired) {
+      throw StateError('Not paired with a backend');
+    }
+    return Uri.parse('http://$_host/api/v1/docker/containers/$id/$action');
+  }
+
+  /// `ws://<host>/ws/docker/containers/{id}/logs?token=...`
+  Uri dockerContainerLogsWsUri(String id) {
+    if (!isPaired) {
+      throw StateError('Not paired with a backend');
+    }
+    return Uri.parse('ws://$_host/ws/docker/containers/$id/logs').replace(queryParameters: {'token': _token});
+  }
 }

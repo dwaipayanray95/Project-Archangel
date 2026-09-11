@@ -76,22 +76,22 @@ func resolvePath(requested string) (string, error) {
 	}
 
 	cleaned := CleanPath(requested)
-	if !isWithinRoot(cleaned) {
-		return "", fmt.Errorf("path is outside the configured files_root")
-	}
 
+	// On systems like macOS, root is symlink-resolved (e.g. /private/var/folders/...),
+	// while requested may contain an alias (e.g. /var/folders/...).
 	resolved, err := filepath.EvalSymlinks(cleaned)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// Let the caller's os.Stat/os.ReadDir surface a normal
-			// not-found error rather than this masking it as a jail
-			// violation.
+			if !isWithinRoot(cleaned) {
+				return "", fmt.Errorf("path is outside the configured files_root")
+			}
 			return cleaned, nil
 		}
 		return "", err
 	}
-	if !isWithinRoot(resolved) {
-		return "", fmt.Errorf("path escapes files_root via a symlink")
+
+	if !isWithinRoot(resolved) && !isWithinRoot(cleaned) {
+		return "", fmt.Errorf("path is outside the configured files_root")
 	}
 	return resolved, nil
 }

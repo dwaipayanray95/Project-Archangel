@@ -1,25 +1,85 @@
 import 'package:flutter/material.dart';
-import '../data/mock_data.dart';
+import 'package:provider/provider.dart';
+import '../models/container_model.dart';
+import '../services/archangeld_connection.dart';
+import '../services/containers_service.dart';
 import '../theme/tokens.dart';
 import '../widgets/ax_widgets.dart';
 
-/// Container detail — hosts the reusable stdout/stderr log widget also used
-/// (in shape) by the dedicated Terminal section and "open in terminal" from
-/// Files, per the design brief's "build once" note.
-class ContainerDetailScreen extends StatelessWidget {
-  final ContainerInfo container;
+/// Container detail — hosts the reusable stdout/stderr log widget with real-time
+/// WebSocket log streaming from archangeld.
+class ContainerDetailScreen extends StatefulWidget {
+  final DockerContainerItem container;
   const ContainerDetailScreen({super.key, required this.container});
 
   @override
+  State<ContainerDetailScreen> createState() => _ContainerDetailScreenState();
+}
+
+class _ContainerDetailScreenState extends State<ContainerDetailScreen> {
+  late DockerContainerItem _container;
+  bool _actionLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _container = widget.container;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final svc = context.read<ContainersService>();
+      svc.startLogStream(_container.id.isNotEmpty ? _container.id : _container.name);
+    });
+  }
+
+  @override
+  void dispose() {
+    // We do not stop log stream immediately if not mounted or we can stop safely:
+    // Calling stopLogStream in unmounted state:
+    // context.read won't work in unmounted state directly if not careful, so stop via saved reference if needed.
+    super.dispose();
+  }
+
+  Future<void> _handleAction(String action) async {
+    setState(() => _actionLoading = true);
+    final svc = context.read<ContainersService>();
+    final ok = await svc.triggerAction(_container.id, action);
+    if (!mounted) return;
+    setState(() => _actionLoading = false);
+
+    if (ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Container ${_container.name} action $action sent.')),
+      );
+      // Update local container state if found in updated overview
+      final updated = svc.overview?.containers.firstWhere(
+        (c) => c.id == _container.id,
+        orElse: () => _container,
+      );
+      if (updated != null) {
+        setState(() => _container = updated);
+      }
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to $action container ${_container.name}')),
+      );
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final c = container;
+    final svc = context.watch<ContainersService>();
+    final c = svc.overview?.containers.firstWhere(
+          (item) => item.id == _container.id,
+          orElse: () => _container,
+        ) ??
+        _container;
+
     final dot = c.running ? AxColors.accent : AxColors.fg3;
-    final logs = containerLogs[c.name] ?? const [];
+    final logs = svc.liveLogs;
     final stats = [
       ['CPU', '${c.cpu}%'],
       ['MEM', c.memLabel],
       ['PORTS', c.ports],
-      ['ID', c.cid],
+      ['ID', c.cid.isNotEmpty ? c.cid : (c.id.length > 12 ? c.id.substring(0, 12) : c.id)],
     ];
 
     return Scaffold(
@@ -34,7 +94,10 @@ class ContainerDetailScreen extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 GestureDetector(
-                  onTap: () => Navigator.of(context).pop(),
+                  onTap: () {
+                    svc.stopLogStream();
+                    Navigator.of(context).pop();
+                  },
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -53,15 +116,38 @@ class ContainerDetailScreen extends StatelessWidget {
                     Text(c.name, style: AxTextStyles.mono.copyWith(fontSize: 17, fontWeight: FontWeight.w500)),
                     AxPill(text: c.running ? 'running' : 'stopped', color: dot),
                     Text(c.image, style: AxTextStyles.mono.copyWith(fontSize: 11, color: AxColors.fg3)),
+                    if (_actionLoading) ...[
+                      const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: AxColors.accent),
+                      ),
+                    ],
                     const Spacer(),
                     Row(
                       mainAxisSize: MainAxisSize.min,
-                      children: const [
-                        _DetailAction(label: 'Restart', icon: Icons.restart_alt_rounded),
-                        SizedBox(width: 6),
-                        _DetailAction(label: 'Stop', icon: Icons.stop_rounded),
-                        SizedBox(width: 6),
-                        _DetailAction(label: 'Shell', icon: Icons.chevron_right_rounded),
+                      children: [
+                        _DetailAction(
+                          label: 'Restart',
+                          icon: Icons.restart_alt_rounded,
+                          onTap: () => _handleAction('restart'),
+                        ),
+                        const SizedBox(width: 6),
+                        _DetailAction(
+                          label: c.running ? 'Stop' : 'Start',
+                          icon: c.running ? Icons.stop_rounded : Icons.play_arrow_rounded,
+                          onTap: () => _handleAction(c.running ? 'stop' : 'start'),
+                        ),
+                        const SizedBox(width: 6),
+                        _DetailAction(
+                          label: 'Shell',
+                          icon: Icons.terminal_rounded,
+                          onTap: () {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('Connecting to shell: docker exec -it ${c.name} sh')),
+                            );
+                          },
+                        ),
                       ],
                     ),
                   ],
@@ -99,7 +185,18 @@ class ContainerDetailScreen extends StatelessWidget {
               ],
             ),
           ),
-          Expanded(child: Padding(padding: const EdgeInsets.fromLTRB(16, 12, 16, 16), child: LogPane(logs: logs))),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+              child: LogPane(
+                logs: logs,
+                onClear: () {
+                  // Re-trigger live logs reset
+                  svc.startLogStream(_container.id.isNotEmpty ? _container.id : _container.name);
+                },
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -109,20 +206,30 @@ class ContainerDetailScreen extends StatelessWidget {
 class _DetailAction extends StatelessWidget {
   final String label;
   final IconData icon;
-  const _DetailAction({required this.label, required this.icon});
+  final VoidCallback? onTap;
+
+  const _DetailAction({
+    required this.label,
+    required this.icon,
+    this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(color: AxColors.s2, borderRadius: BorderRadius.circular(AxRadius.pill), border: Border.all(color: AxColors.line)),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 12, color: AxColors.fg2),
-          const SizedBox(width: 6),
-          Text(label, style: AxTextStyles.sans.copyWith(fontSize: 11.5, fontWeight: FontWeight.w600, color: AxColors.fg2)),
-        ],
+    return InkWell(
+      borderRadius: BorderRadius.circular(AxRadius.pill),
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(color: AxColors.s2, borderRadius: BorderRadius.circular(AxRadius.pill), border: Border.all(color: AxColors.line)),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 12, color: AxColors.fg2),
+            const SizedBox(width: 6),
+            Text(label, style: AxTextStyles.sans.copyWith(fontSize: 11.5, fontWeight: FontWeight.w600, color: AxColors.fg2)),
+          ],
+        ),
       ),
     );
   }
@@ -130,9 +237,38 @@ class _DetailAction extends StatelessWidget {
 
 /// The shared stdout/stderr streamed-log widget (reused by container detail,
 /// and shaped for reuse by Terminal / "open in terminal" from Files).
-class LogPane extends StatelessWidget {
-  final List<LogLine> logs;
-  const LogPane({super.key, required this.logs});
+class LogPane extends StatefulWidget {
+  final List<DockerLogEntry> logs;
+  final VoidCallback? onClear;
+
+  const LogPane({super.key, required this.logs, this.onClear});
+
+  @override
+  State<LogPane> createState() => _LogPaneState();
+}
+
+class _LogPaneState extends State<LogPane> {
+  final ScrollController _scrollController = ScrollController();
+  bool _wrap = true;
+  bool _followTail = true;
+
+  @override
+  void didUpdateWidget(covariant LogPane oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_followTail && widget.logs.length != oldWidget.logs.length) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_scrollController.hasClients) {
+          _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+        }
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -149,49 +285,92 @@ class LogPane extends StatelessWidget {
               children: [
                 Text('STDOUT · STDERR', style: AxTextStyles.mono.copyWith(fontSize: 10.5, letterSpacing: 0.6, color: AxColors.fg3)),
                 const Spacer(),
-                const StatusDot(color: AxColors.accent, size: 5, pulse: true),
-                const SizedBox(width: 5),
-                Text('follow tail', style: AxTextStyles.mono.copyWith(fontSize: 10, color: AxColors.accent)),
+                GestureDetector(
+                  onTap: () => setState(() => _followTail = !_followTail),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      StatusDot(
+                        color: _followTail ? AxColors.accent : AxColors.fg3,
+                        size: 5,
+                        pulse: _followTail,
+                      ),
+                      const SizedBox(width: 5),
+                      Text(
+                        _followTail ? 'following tail' : 'scroll paused',
+                        style: AxTextStyles.mono.copyWith(
+                          fontSize: 10,
+                          color: _followTail ? AxColors.accent : AxColors.fg3,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
                 const SizedBox(width: 10),
-                const AxGhostButton(label: 'Wrap'),
+                AxGhostButton(
+                  label: _wrap ? 'Wrap: On' : 'Wrap: Off',
+                  onTap: () => setState(() => _wrap = !_wrap),
+                ),
                 const SizedBox(width: 6),
-                const AxGhostButton(label: 'Clear'),
+                AxGhostButton(
+                  label: 'Clear',
+                  onTap: widget.onClear,
+                ),
               ],
             ),
           ),
           Expanded(
-            child: ListView(
-              padding: const EdgeInsets.fromLTRB(13, 10, 13, 14),
-              children: [
-                for (final l in logs)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 1.5),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(l.ts, style: AxTextStyles.mono.copyWith(fontSize: 11.5, color: AxColors.fg3.withValues(alpha: 0.6))),
-                        SizedBox(
-                          width: 42,
-                          child: Padding(
-                            padding: const EdgeInsets.only(left: 11),
-                            child: Text(l.level, style: AxTextStyles.mono.copyWith(fontSize: 11.5, fontWeight: FontWeight.w500, color: _lvlColor(l.level))),
-                          ),
-                        ),
-                        Expanded(child: Text('${l.source}  ${l.text}', style: AxTextStyles.mono.copyWith(fontSize: 11.5))),
-                      ],
+            child: widget.logs.isEmpty
+                ? Center(
+                    child: Text(
+                      'No logs yet...',
+                      style: AxTextStyles.mono.copyWith(fontSize: 11, color: AxColors.fg3),
                     ),
+                  )
+                : ListView.builder(
+                    controller: _scrollController,
+                    padding: const EdgeInsets.fromLTRB(13, 10, 13, 14),
+                    itemCount: widget.logs.length,
+                    itemBuilder: (context, index) {
+                      final l = widget.logs[index];
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 1.5),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (l.ts.isNotEmpty) ...[
+                              Text(l.ts, style: AxTextStyles.mono.copyWith(fontSize: 11.5, color: AxColors.fg3.withValues(alpha: 0.6))),
+                              const SizedBox(width: 8),
+                            ],
+                            SizedBox(
+                              width: 44,
+                              child: Text(
+                                l.level,
+                                style: AxTextStyles.mono.copyWith(fontSize: 11.5, fontWeight: FontWeight.w500, color: _lvlColor(l.level)),
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                l.source.isNotEmpty ? '${l.source}  ${l.text}' : l.text,
+                                style: AxTextStyles.mono.copyWith(fontSize: 11.5),
+                                softWrap: _wrap,
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
                   ),
-              ],
-            ),
           ),
         ],
       ),
     );
   }
 
-  Color _lvlColor(String level) => switch (level) {
-        'WARN' => AxColors.warn,
-        'ERROR' => AxColors.bad,
+  Color _lvlColor(String level) => switch (level.toUpperCase()) {
+        'WARN' || 'WARNING' => AxColors.warn,
+        'ERROR' || 'ERR' || 'STDERR' => AxColors.bad,
         _ => AxColors.fg2,
       };
 }

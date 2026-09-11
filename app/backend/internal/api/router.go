@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/dwaipayanray95/project-archangel/backend/internal/auth"
+	"github.com/dwaipayanray95/project-archangel/backend/internal/docker"
 	"github.com/dwaipayanray95/project-archangel/backend/internal/files"
 	"github.com/dwaipayanray95/project-archangel/backend/internal/system"
 	"github.com/dwaipayanray95/project-archangel/backend/internal/terminal"
@@ -38,8 +39,13 @@ func NewRouter(verify auth.Verifier) http.Handler {
 	mux.Handle("GET /api/v1/files/read", auth.Middleware(verify, http.HandlerFunc(files.ReadHandler)))
 	mux.Handle("GET /api/v1/files/download", auth.Middleware(verify, http.HandlerFunc(files.DownloadHandler)))
 
-	// Milestones 3-4 add their routes here:
-	// /api/v1/services/*, /api/v1/docker/*, /api/v1/oci/*.
+	// Docker / Containers Cockpit
+	mux.Handle("GET /api/v1/docker/containers", auth.Middleware(verify, http.HandlerFunc(docker.ContainersHandler)))
+	mux.Handle("POST /api/v1/docker/containers/{id}/{action}", auth.Middleware(verify, http.HandlerFunc(docker.ContainerActionHandler)))
+	mux.Handle("GET /ws/docker/containers/{id}/logs", auth.Middleware(verify, http.HandlerFunc(docker.ContainerLogsWsHandler)))
+
+	// Milestones 4+ add their routes here:
+	// /api/v1/services/*, /api/v1/oci/*.
 
 	return withLogging(mux)
 }
