@@ -198,14 +198,39 @@ func runPair(args []string) {
 	configPath := fs.String("config", "/etc/archangel/config.yaml", "path to config.yaml")
 	asQR := fs.Bool("qr", false, "also print the bundle as an ASCII QR code (needs qrencode)")
 	rawOutput := fs.Bool("raw", false, "print only the bare bundle string, no preamble/trailer text - for scripts/automation (e.g. the in-app setup wizard) parsing stdout")
-	_ = fs.Parse(args)
 
-	rest := fs.Args()
-	if len(rest) != 1 || rest[0] == "" {
+	// Go's flag package stops parsing at the first non-flag argument, so
+	// `pair <device-name> --raw` (device name before the flags - the
+	// order this command's own usage string below documents, and the
+	// order the setup wizard's VpsSetupService._pair calls it in) would
+	// otherwise leave BOTH the device name and --raw unconsumed as
+	// "positional" args, always failing the len(rest) != 1 check below
+	// no matter what the device name is. Partition flags out from the
+	// positional device-name argument first so it can appear anywhere
+	// relative to the flags, matching how most real CLIs behave.
+	var flagArgs, positional []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "-config" || a == "--config":
+			flagArgs = append(flagArgs, a)
+			if i+1 < len(args) {
+				i++
+				flagArgs = append(flagArgs, args[i])
+			}
+		case strings.HasPrefix(a, "-"):
+			flagArgs = append(flagArgs, a)
+		default:
+			positional = append(positional, a)
+		}
+	}
+	_ = fs.Parse(flagArgs)
+
+	if len(positional) != 1 || positional[0] == "" {
 		fmt.Fprintln(os.Stderr, "usage: archangeld pair <device-name> [--qr] [--raw]")
 		os.Exit(1)
 	}
-	name := rest[0]
+	name := positional[0]
 
 	cfg, err := config.Load(*configPath)
 	if err != nil {
