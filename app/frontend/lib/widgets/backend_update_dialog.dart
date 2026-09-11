@@ -152,6 +152,19 @@ class _BackendUpdateDialogState extends State<BackendUpdateDialog> {
     }
   }
 
+  // Each stage emits a "starting" event followed later by a "complete"
+  // one for the same stage - replace the row in place instead of
+  // appending a second one, so the log reads as a checklist that ticks
+  // off item by item rather than showing both an empty and a filled
+  // circle for the same step.
+  void _appendOrUpdate(SetupProgress event) {
+    if (_log.isNotEmpty && _log.last.stage == event.stage) {
+      _log[_log.length - 1] = event;
+    } else {
+      _log.add(event);
+    }
+  }
+
   void _runUpdate() {
     final backend = context.read<ArchangeldConnection>();
     final service = VpsSetupService(_transport!);
@@ -166,7 +179,7 @@ class _BackendUpdateDialogState extends State<BackendUpdateDialog> {
           },
         )
         .listen(
-          (event) => setState(() => _log.add(event)),
+          (event) => setState(() => _appendOrUpdate(event)),
           onError: (Object e) => setState(() => _runError = e),
           onDone: () {
             if (!mounted) return;
@@ -281,16 +294,24 @@ class _BackendUpdateDialogState extends State<BackendUpdateDialog> {
             itemCount: _log.length,
             itemBuilder: (context, i) {
               final entry = _log[i];
+              final isActive = !entry.stageComplete && _runError == null;
               return Padding(
                 padding: const EdgeInsets.symmetric(vertical: 4),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Icon(
-                      entry.stageComplete ? Icons.check_circle : Icons.radio_button_unchecked,
-                      size: 14,
-                      color: entry.stageComplete ? AxColors.accent : AxColors.fg3,
-                    ),
+                    if (isActive)
+                      const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: AxColors.accent),
+                      )
+                    else
+                      Icon(
+                        entry.stageComplete ? Icons.check_circle : Icons.radio_button_unchecked,
+                        size: 14,
+                        color: entry.stageComplete ? AxColors.accent : AxColors.fg3,
+                      ),
                     const SizedBox(width: 8),
                     Expanded(child: Text(entry.message, style: AxTextStyles.mono.copyWith(fontSize: 12, color: AxColors.fg2))),
                   ],

@@ -196,6 +196,19 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
     return showHostKeyConfirmDialog(context, host: host, keyType: keyType, fingerprint: fingerprint, isMismatch: isMismatch);
   }
 
+  // Each stage emits a "starting" event followed later by a "complete"
+  // one for the same stage - replace the row in place instead of
+  // appending a second one, so the log reads as a checklist that ticks
+  // off item by item rather than showing both an empty and a filled
+  // circle for the same step.
+  void _appendOrUpdate(SetupProgress event) {
+    if (_log.isNotEmpty && _log.last.stage == event.stage) {
+      _log[_log.length - 1] = event;
+    } else {
+      _log.add(event);
+    }
+  }
+
   void _runSetup() {
     final config = VpsSetupConfig(
       deviceName: _deviceNameController.text.trim().isEmpty ? _defaultDeviceName() : _deviceNameController.text.trim(),
@@ -206,7 +219,7 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
     final service = VpsSetupService(_transport!);
     service.run(config).listen(
       (event) => setState(() {
-        _log.add(event);
+        _appendOrUpdate(event);
         if (!event.stageComplete) _elapsedSeconds = 0;
       }),
       onError: (Object e) {
