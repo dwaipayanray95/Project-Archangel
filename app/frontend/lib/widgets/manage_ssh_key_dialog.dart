@@ -41,42 +41,17 @@ class _ManageSshKeyDialogState extends State<ManageSshKeyDialog> {
   }
 
   Future<void> _load() async {
-    final hasKey = await hasSavedSshCredentials();
-    if (!hasKey) {
-      if (!mounted) return;
-      setState(() => _loading = false);
-      return;
-    }
-
-    final pin = await promptForPin(context, title: 'Enter PIN', message: 'Enter the PIN that protects your saved SSH key.');
+    final creds = await unlockSavedSshCredentials(context);
     if (!mounted) return;
-    if (pin == null) {
-      setState(() {
-        _loading = false;
-        _error = 'Cancelled - showing an empty form instead of the saved key.';
-      });
-      return;
-    }
-
-    try {
-      final creds = await loadSavedSshCredentials(pin);
-      if (!mounted) return;
-      setState(() {
-        if (creds != null) {
-          _hostController.text = creds.host;
-          _usernameController.text = creds.username;
-          _privateKeyController.text = creds.privateKeyPem;
-          _hadSavedKey = true;
-        }
-        _loading = false;
-      });
-    } on WrongPinException {
-      if (!mounted) return;
-      setState(() {
-        _loading = false;
-        _error = 'Incorrect PIN - showing an empty form instead of the saved key.';
-      });
-    }
+    setState(() {
+      if (creds != null) {
+        _hostController.text = creds.host;
+        _usernameController.text = creds.username;
+        _privateKeyController.text = creds.privateKeyPem;
+        _hadSavedKey = true;
+      }
+      _loading = false;
+    });
   }
 
   @override

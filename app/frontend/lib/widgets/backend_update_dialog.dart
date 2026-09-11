@@ -64,32 +64,17 @@ class _BackendUpdateDialogState extends State<BackendUpdateDialog> {
   }
 
   Future<void> _restoreSavedKey() async {
-    if (!await hasSavedSshCredentials()) {
-      setState(() => _loadingSavedKey = false);
-      return;
-    }
-    final pin = await promptForPin(context, title: 'Enter PIN', message: 'Enter the PIN that protects your saved SSH key.');
+    final creds = await unlockSavedSshCredentials(context);
     if (!mounted) return;
-    if (pin == null) {
-      setState(() => _loadingSavedKey = false);
-      return;
-    }
-    try {
-      final creds = await loadSavedSshCredentials(pin);
-      if (!mounted) return;
-      setState(() {
-        if (creds != null) {
-          _hostController.text = creds.host;
-          _usernameController.text = creds.username;
-          _privateKeyController.text = creds.privateKeyPem;
-          _rememberKey = true;
-        }
-        _loadingSavedKey = false;
-      });
-    } on WrongPinException {
-      if (!mounted) return;
-      setState(() => _loadingSavedKey = false);
-    }
+    setState(() {
+      if (creds != null) {
+        _hostController.text = creds.host;
+        _usernameController.text = creds.username;
+        _privateKeyController.text = creds.privateKeyPem;
+        _rememberKey = true;
+      }
+      _loadingSavedKey = false;
+    });
   }
 
   @override

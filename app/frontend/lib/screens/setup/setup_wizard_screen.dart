@@ -77,28 +77,19 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
   }
 
   Future<void> _restoreSavedKey() async {
-    if (!await hasSavedSshCredentials()) return;
-
-    // Gate reading the actual key value behind the PIN that protects it
-    // - it grants root on the VPS, so a device left unlocked shouldn't
-    // hand it over just by opening this screen. The PIN isn't just a
-    // gate here, it's the decryption key itself (see
-    // credential_crypto.dart) - there's no way to "allow" without it.
-    final pin = await promptForPin(context, title: 'Enter PIN', message: 'Enter the PIN that protects your saved SSH key.');
-    if (!mounted || pin == null) return;
-
-    try {
-      final creds = await loadSavedSshCredentials(pin);
-      if (!mounted || creds == null) return;
-      setState(() {
-        _hostController.text = creds.host;
-        _usernameController.text = creds.username;
-        _privateKeyController.text = creds.privateKeyPem;
-        _rememberKey = true;
-      });
-    } on WrongPinException {
-      // Wrong PIN - leave the form empty, same as "no saved key".
-    }
+    // Restoring the key requires the PIN that protects it - it grants
+    // root on the VPS, so a device left unlocked shouldn't hand it over
+    // just by opening this screen. unlockSavedSshCredentials caches the
+    // decrypted value in memory for the app session, so if it was
+    // already unlocked elsewhere this run, this won't prompt again.
+    final creds = await unlockSavedSshCredentials(context);
+    if (!mounted || creds == null) return;
+    setState(() {
+      _hostController.text = creds.host;
+      _usernameController.text = creds.username;
+      _privateKeyController.text = creds.privateKeyPem;
+      _rememberKey = true;
+    });
   }
 
   @override
