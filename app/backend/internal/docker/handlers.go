@@ -108,11 +108,10 @@ func ContainerActionHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool {
-		return true
-	},
-}
+// CheckOrigin left at its default (same-origin check) - matches the
+// hardened pattern in internal/system's stats upgrader; this endpoint is
+// already gated by auth.Middleware regardless.
+var upgrader = websocket.Upgrader{}
 
 // ContainerLogsWsHandler handles GET /ws/docker/containers/{id}/logs
 func ContainerLogsWsHandler(w http.ResponseWriter, r *http.Request) {

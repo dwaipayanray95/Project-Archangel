@@ -8,11 +8,20 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 )
 
 const defaultSocketPath = "/var/run/docker.sock"
+
+// validContainerID matches Docker's own container ID/name charset. Any
+// endpoint that splices a caller-supplied id into the Docker Engine API
+// request path must reject anything not matching this first - the id is
+// never otherwise escaped, so an unvalidated value (e.g. containing "/"
+// or "..") could redirect the request to a different Engine API endpoint
+// entirely over the Unix socket, which is root-equivalent access.
+var validContainerID = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
 
 // Client interacts directly with Docker Engine via the local Unix socket.
 type Client struct {
@@ -167,6 +176,10 @@ func (c *Client) ListContainers() ([]ContainerItem, error) {
 
 // ContainerAction triggers start, stop, or restart.
 func (c *Client) ContainerAction(id, action string) error {
+	if !validContainerID.MatchString(id) {
+		return fmt.Errorf("invalid container id")
+	}
+
 	var endpoint string
 	switch action {
 	case "start":
@@ -199,6 +212,10 @@ func (c *Client) ContainerAction(id, action string) error {
 
 // StreamLogsReader opens a raw streaming reader to Docker's container logs.
 func (c *Client) StreamLogsReader(ctx context.Context, id string, tail int) (io.ReadCloser, error) {
+	if !validContainerID.MatchString(id) {
+		return nil, fmt.Errorf("invalid container id")
+	}
+
 	endpoint := fmt.Sprintf("http://localhost/containers/%s/logs?follow=1&stdout=1&stderr=1&tail=%d&timestamps=1", id, tail)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {

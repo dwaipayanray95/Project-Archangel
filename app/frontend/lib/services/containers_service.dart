@@ -52,6 +52,7 @@ class ContainersService extends ChangeNotifier {
     final backend = _backend;
     if (backend == null || !backend.isPaired || backend.token == null) {
       _loadMockOverview();
+      notifyListeners();
       return;
     }
 

@@ -90,7 +90,7 @@ func resolvePath(requested string) (string, error) {
 		return "", err
 	}
 
-	if !isWithinRoot(resolved) && !isWithinRoot(cleaned) {
+	if !isWithinRoot(resolved) {
 		return "", fmt.Errorf("path is outside the configured files_root")
 	}
 	return resolved, nil

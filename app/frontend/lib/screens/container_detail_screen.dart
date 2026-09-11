@@ -19,22 +19,26 @@ class ContainerDetailScreen extends StatefulWidget {
 class _ContainerDetailScreenState extends State<ContainerDetailScreen> {
   late DockerContainerItem _container;
   bool _actionLoading = false;
+  ContainersService? _svc;
 
   @override
   void initState() {
     super.initState();
     _container = widget.container;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final svc = context.read<ContainersService>();
-      svc.startLogStream(_container.id.isNotEmpty ? _container.id : _container.name);
+      if (!mounted) return;
+      _svc = context.read<ContainersService>();
+      _svc!.startLogStream(_container.id.isNotEmpty ? _container.id : _container.name);
     });
   }
 
   @override
   void dispose() {
-    // We do not stop log stream immediately if not mounted or we can stop safely:
-    // Calling stopLogStream in unmounted state:
-    // context.read won't work in unmounted state directly if not careful, so stop via saved reference if needed.
+    // Saved at start time rather than read from context here, since
+    // context is unsafe to use once the widget is unmounting - this way
+    // the stream is stopped regardless of how the screen was left
+    // (back-arrow tap, system back gesture, or any other route pop).
+    _svc?.stopLogStream();
     super.dispose();
   }
 
