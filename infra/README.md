@@ -10,7 +10,7 @@ SSH for you, no manual steps 1 and 3 required - see
 [`app/frontend/README.md`](../app/frontend/README.md#what-the-app-does).
 This runbook remains the reference for what those scripts actually do,
 manual recovery if the wizard isn't available, and everything OCI/account
--side the wizard can't touch (section 10's firewall gotcha in particular).
+-side the wizard can't touch (section 8's firewall gotcha in particular).
 The reverse also exists in-app now — `infra/scripts/uninstall.sh` tears
 WireGuard and archangeld back down, run from Settings' "Danger zone" the
 same way; see [`app/backend/README.md#uninstalling`](../app/backend/README.md#uninstalling).
@@ -19,7 +19,7 @@ same way; see [`app/backend/README.md#uninstalling`](../app/backend/README.md#un
 
 ## Quickstart: set up a fresh server
 
-Two steps, run from two different places — details, caveats, and everything each one actually does are in sections 1-11 below, but this is the whole thing end to end.
+Two steps, run from two different places — details, caveats, and everything each one actually does are in sections 1-9 below, but this is the whole thing end to end.
 
 **1. On the new server itself** (SSH in first — see section 4 for the connection command), gets it from "just launched" to "baseline + WireGuard fully configured, firewall gotcha fixed and boot-persisted":
 ```bash
@@ -28,7 +28,7 @@ cd Project-Archangel
 ./infra/scripts/install-archangel.sh
 ```
 
-**2. One manual step this can't automate:** open `51820/udp` in the OCI Console's Security List (VCN-level firewall — `ufw` alone isn't enough, see section 10). `install-archangel.sh` prints this reminder at the end too.
+**2. One manual step this can't automate:** open `51820/udp` in the OCI Console's Security List (VCN-level firewall — `ufw` alone isn't enough, see section 8). `install-archangel.sh` prints this reminder at the end too.
 
 **3. From your own machine** (not the server — this builds the Go binary locally and pushes it over), deploys the backend:
 ```bash
@@ -65,7 +65,7 @@ Both `install-archangel.sh` and `deploy.sh` are safe to re-run — they check th
 
 **Why 1 OCPU/6GB instead of the full 2/12?** Smaller requests succeed more often when scavenging for scarce free-tier Ampere capacity — this is a widely recommended trick, not just our guess. Once the box is up, it can be resized later if more capacity frees up.
 
-**Status:** not yet allocated — the retry automation in section 8 is actively chasing this.
+**Status:** not yet allocated — no automated retry in place (see section 6); provision manually via the Console when capacity is available.
 
 ## 3. AMD Micro Instance Configuration (`Archangel-Mk1`)
 
@@ -81,7 +81,7 @@ Provisioned directly via the OCI Console — no capacity scarcity issue for this
 | Public IPv4 | `<YOUR_SERVER_IP>` |
 | Created | 2026-09-01 |
 
-**Status:** running, baseline setup complete (see section 9), WireGuard configured with 3 peers (see section 10) — OCI Security List rule for `51820/udp` still needs adding before any device can actually connect.
+**Status:** running, baseline setup complete (see section 7), WireGuard configured with 3 peers (see section 8) — OCI Security List rule for `51820/udp` still needs adding before any device can actually connect.
 
 ## 4. SSH Access
 
@@ -107,7 +107,7 @@ First connection to a given IP will prompt to confirm the host key fingerprint �
 2. Run `oci setup config`:
    - Region: `ap-mumbai-1`
    - Generates a separate RSA **API signing keypair** (different from the SSH keypair above) at `~/.oci/oci_api_key.pem` (private) and `~/.oci/oci_api_key_public.pem` (public)
-   - **This key *is* passphrase-encrypted** (despite earlier notes here once saying otherwise) — confirmed when the GitHub Actions workflow in section 8 tried to load it non-interactively. The passphrase itself lives wherever the Mac's `oci setup config` prompt answer went (password manager recommended, same as the SSH key) — it also has to be supplied as the `OCI_API_KEY_PASSPHRASE` GitHub secret for section 8's automation to authenticate
+   - **This key *is* passphrase-encrypted** (despite earlier notes here once saying otherwise). The passphrase itself lives wherever the Mac's `oci setup config` prompt answer went (password manager recommended, same as the SSH key)
 3. Upload the API public key in OCI Console → **My Profile → API Keys**
 4. Verify with: `oci iam region list`
 
@@ -126,50 +126,9 @@ Out of capacity for shape VM.Standard.A1.Flex in availability domain AD-1
 ```
 This is a widely-documented issue — community reports mention it can take anywhere from days to 1–3 months of continuous retrying to catch a free slot, sometimes 100,000+ attempts. **The AMD Micro shape has no such scarcity problem** — that instance was created directly via the Console with no retrying needed.
 
-**Solution:** an auto-retry script (see `scripts/oci_retry.sh`) that loops the launch command until it succeeds.
+No automated retry is set up for this repo. If chasing this capacity again, either retry manually via the Console, or script your own loop around `oci compute instance launch` with your own (never-committed) tenancy/subnet/image OCIDs.
 
-## 7. Retry Script
-
-See [`scripts/oci_retry.sh`](scripts/oci_retry.sh).
-
-- Retries every **120 seconds** (tuned — 60s triggered rate-limiting; 120s is a healthy interval per community consensus, range is typically 60s–5min)
-- On `TooManyRequests`, backs off for an additional 120s
-- On success: prints the created instance JSON and plays a sound (macOS `afplay`)
-- Uses `--ssh-authorized-keys-file` pointing at the public key (not raw JSON metadata — avoids key-escaping issues)
-
-Run it with (from the repo root):
-```bash
-chmod +x infra/scripts/oci_retry.sh
-./infra/scripts/oci_retry.sh
-```
-Needs to keep running (Mac must not sleep) until it succeeds — see Section 8 for a way to avoid babysitting a laptop.
-
-## 8. Alternative: GitHub Actions
-
-To avoid keeping a Mac awake indefinitely, the retry logic runs on a schedule via GitHub Actions instead: [`.github/workflows/oci-retry.yml`](../.github/workflows/oci-retry.yml), calling [`scripts/oci_retry_once.sh`](scripts/oci_retry_once.sh) (a single-attempt variant of `oci_retry.sh` — each workflow run is one attempt, the cron schedule provides the loop).
-
-- Free tier: 2,000 minutes/month for private repos. Configured for every **15 minutes** (not 5 — a 5-minute interval, worst case run continuously for a full month, would use ~6,500 min/month and blow the budget; 15 minutes with pip caching keeps worst-case usage to roughly 700-900 min/month)
-- **In practice, GitHub's `schedule:` trigger is best-effort and gets delayed significantly** — observed real gaps between scheduled runs have ranged from minutes to over 16 hours, not a steady 15-minute cadence. This is a documented GitHub platform limitation, not a bug in this workflow. Trigger it manually (Actions tab → **OCI Instance Retry** → **Run workflow**) any time you want an immediate attempt instead of waiting
-- This is a legitimate, lightweight use of Actions — not the kind of heavy/abusive automation prohibited in GitHub's terms (e.g. crypto mining)
-- Idempotent: the script checks for an existing instance named `project-archangel` in any non-terminated state first and exits early if one is found, so it's safe to leave the schedule running
-- "Out of capacity" / rate-limited responses exit non-zero-but-not-a-failure (`75`) so they don't spam failure-notification emails; only a genuinely unexpected error fails the job
-- A dedicated "Verify OCI credentials" step runs `oci iam region list` before ever attempting a launch — if any secret is wrong (typo'd OCID, mismatched fingerprint/key pair, wrong passphrase, malformed key file), the job fails immediately at that step with a clear error, instead of the mistake surfacing later buried inside a launch failure. Check the failed run's logs (Actions tab → the red run → the relevant step) to see exactly what OCI rejected
-
-**Required GitHub encrypted secrets** (Settings → Secrets and variables → Actions):
-
-| Secret | Value |
-|---|---|
-| `OCI_USER_OCID` | Your OCI user OCID (`oci iam user list`, or Console → My Profile) |
-| `OCI_FINGERPRINT` | Fingerprint of the API signing key uploaded in Console → My Profile → API Keys |
-| `OCI_API_PRIVATE_KEY` | Full contents of `~/.oci/oci_api_key.pem` (the API signing key, **not** the SSH key) |
-| `OCI_API_KEY_PASSPHRASE` | The API signing key's passphrase (see section 5 — it does have one) |
-| `OCI_SSH_PUBLIC_KEY` | Full contents of `~/Downloads/project-archangel-public.key.pub` |
-
-Tenancy OCID and region are *not* stored as secrets — they aren't sensitive (already public in section 5 above and hardcoded in the scripts), so they're hardcoded directly in the workflow file instead.
-
-Never commit any of the above as plain files — secrets only. The workflow disables itself automatically once the instance launches successfully (see the last step in `oci-retry.yml`), so no manual cleanup is needed.
-
-## 9. Baseline Post-Launch Setup (repeat for every new instance)
+## 7. Baseline Post-Launch Setup (repeat for every new instance)
 
 Applied to `Archangel-Mk1` (AMD Micro) on 2026-09-01. **Run this same sequence on the Ampere A1 instance once it's allocated.**
 
@@ -208,7 +167,7 @@ Manual steps (what the script above actually does, kept here as reference/fallba
    sudo ufw enable
    ```
    Confirm with `y` when prompted about disrupting the current SSH session — allowing OpenSSH first prevents an actual lockout.
-   > Note: this only configures the OS-level firewall. OCI also has its own network-level firewall (VCN Security List / Network Security Group) in front of it — opening a new port later (e.g. WireGuard's, or the app's API) will likely need **both** `ufw allow <port>` *and* a Security List rule in the OCI Console. See section 10 for a real instance of this gotcha.
+   > Note: this only configures the OS-level firewall. OCI also has its own network-level firewall (VCN Security List / Network Security Group) in front of it — opening a new port later (e.g. WireGuard's, or the app's API) will likely need **both** `ufw allow <port>` *and* a Security List rule in the OCI Console. See section 8 for a real instance of this gotcha.
 7. **Verify everything held:**
    ```bash
    free -h && sudo ufw status
@@ -216,7 +175,7 @@ Manual steps (what the script above actually does, kept here as reference/fallba
 
 Not yet done on any instance (deferred until the `app/` backend exists): installing dev tooling like Claude Code/git, deploying the Go backend itself.
 
-## 10. WireGuard VPN Setup
+## 8. WireGuard VPN Setup
 
 The Archangel API (`app/backend`) is designed to be reachable **only** over a WireGuard tunnel, never the public internet directly (see the backend's architecture plan — "the connection needs to be ultra secure"). This section sets up the WireGuard side of that; the Go binary itself isn't deployed yet.
 
@@ -249,7 +208,7 @@ Applied to `Archangel-Mk1` on 2026-09-02: server on `10.10.0.1/24`, three peers 
 
 All five are exactly the class of bug that "did it print an error?" doesn't catch. The scripts' `require_nonempty`/re-verification checks throughout, running as continuous scripts (no time gap for a sudo cache to expire), never installing `iptables-persistent`, using `nft` with stable rule handles instead of fragile `iptables -L` line numbers, and now reapplying the fix at every boot rather than trusting a one-time persistence mechanism — all exist specifically because of this.
 
-## 11. Master Setup Script
+## 9. Master Setup Script
 
 [`infra/scripts/install-archangel.sh`](scripts/install-archangel.sh) is the canonical "how do I set this box up" entrypoint — a thin orchestrator that runs `baseline_setup.sh` then `wireguard_setup.sh` in order (skipping WireGuard if it's already configured, to protect existing pairings). For a genuinely fresh instance:
 
@@ -260,10 +219,10 @@ git clone https://github.com/dwaipayanray95/Project-Archangel.git && cd Project-
 
 It's meant to keep growing as new milestones land — deploying `app/backend`'s binary + systemd unit becomes a new step here once that deployment tooling exists and is verified, rather than being written speculatively ahead of time.
 
-## 12. Related / Future Projects
+## 10. Related / Future Projects
 
 - **Archangel control app** — decided: a **Go backend** (single static binary, SSH bridge + resource watchdog + file browser, holds real SSH credentials server-side) plus a **Flutter frontend** (Android-first, one Dart codebase with iOS/web reach later). The app authenticates to the Go API with its own token — it never touches the SSH key directly. Lives in `app/` at the repo root once work starts (see the root [`README.md`](../README.md)); not yet started.
 - Possible future use cases for the VPS(es): self-hosted WireGuard VPN, backend/staging host for other personal app projects, personal automation projects (finance tracking, uptime monitoring, morning dashboard, etc.)
 
 ---
-*Last updated: 2026-09-01*
+*Last updated: 2026-09-11*

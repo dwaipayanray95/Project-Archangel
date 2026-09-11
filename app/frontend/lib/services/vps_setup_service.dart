@@ -66,7 +66,7 @@ class VpsSetupException implements Exception {
 /// assets/setup_scripts/ - see pubspec.yaml) rather than reimplementing
 /// their logic in Dart, since those scripts already carry hard-won fixes
 /// for real incidents (empty-keyed WireGuard configs, the
-/// iptables-persistent/ufw conflict, etc. - see infra/README.md §10).
+/// iptables-persistent/ufw conflict, etc. - see infra/README.md §8).
 /// NOTE: these are copies, not a shared file path (Flutter can't bundle
 /// assets from outside the package root) - if the scripts under
 /// infra/scripts/ change, re-copy them here too.
