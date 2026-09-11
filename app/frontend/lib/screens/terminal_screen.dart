@@ -28,11 +28,17 @@ class _TerminalScreenState extends State<TerminalScreen> {
     super.dispose();
   }
 
-  void _openSession(ArchangeldConnection backend, {String? initialDir, String? initialCommand, String? label}) {
-    final session = TerminalSession(label: label ?? 'shell $_nextId');
-    _nextId++;
+  void _openSession(ArchangeldConnection backend, {String? initialDir, String? initialCommand, String? label, bool isShared = false}) {
+    final sessionLabel = isShared ? 'live tmux' : (label ?? 'shell $_nextId');
+    if (!isShared) _nextId++;
+    final session = TerminalSession(label: sessionLabel);
     session.connect(backend);
-    if (initialDir != null && initialDir.isNotEmpty) {
+    if (isShared) {
+      // Connects or attaches to a shared persistent tmux session that survives disconnections
+      Future.delayed(const Duration(milliseconds: 600), () {
+        session.sendInput('tmux new-session -A -s archangel-live\n');
+      });
+    } else if (initialDir != null && initialDir.isNotEmpty) {
       Future.delayed(const Duration(milliseconds: 600), () {
         session.sendInput('cd "$initialDir"\n');
       });
@@ -92,6 +98,8 @@ class _TerminalScreenState extends State<TerminalScreen> {
       );
     }
 
+    final currentSession = _sessions[_tab];
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -108,22 +116,69 @@ class _TerminalScreenState extends State<TerminalScreen> {
                   onClose: () => _closeSession(i),
                 ),
               const SizedBox(width: 5),
-              GestureDetector(
-                onTap: () => _openSession(backend),
-                child: const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 6, horizontal: 4),
-                  child: Icon(Icons.add_rounded, size: 16, color: AxColors.fg3),
-                ),
+              PopupMenuButton<String>(
+                tooltip: 'New session',
+                icon: const Icon(Icons.add_rounded, size: 16, color: AxColors.fg3),
+                color: AxColors.s2,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8), side: const BorderSide(color: AxColors.line)),
+                onSelected: (val) {
+                  if (val == 'shell') {
+                    _openSession(backend);
+                  } else if (val == 'tmux') {
+                    _openSession(backend, isShared: true);
+                  }
+                },
+                itemBuilder: (context) => [
+                  PopupMenuItem(
+                    value: 'shell',
+                    child: Row(
+                      children: [
+                        const Icon(Icons.terminal_rounded, size: 14, color: AxColors.accent),
+                        const SizedBox(width: 8),
+                        Text('Standard Shell', style: AxTextStyles.sans.copyWith(fontSize: 12, color: AxColors.fg)),
+                      ],
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: 'tmux',
+                    child: Row(
+                      children: [
+                        const Icon(Icons.hub_rounded, size: 14, color: AxColors.warn),
+                        const SizedBox(width: 8),
+                        Text('Persistent Tmux (Alive)', style: AxTextStyles.sans.copyWith(fontSize: 12, color: AxColors.fg)),
+                      ],
+                    ),
+                  ),
+                ],
               ),
               const Spacer(),
+              // Quick action buttons: Copy output, clear screen
+              IconButton(
+                icon: const Icon(Icons.copy_rounded, size: 13, color: AxColors.fg3),
+                tooltip: 'Copy buffer',
+                onPressed: () {
+                  Clipboard.setData(ClipboardData(text: currentSession.output));
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Terminal output copied to clipboard'), duration: Duration(seconds: 1)),
+                  );
+                },
+              ),
+              IconButton(
+                icon: const Icon(Icons.cleaning_services_rounded, size: 13, color: AxColors.fg3),
+                tooltip: 'Clear screen',
+                onPressed: () {
+                  currentSession.clearOutput();
+                  currentSession.sendInput('\x0c'); // Form feed / clear
+                },
+              ),
               Padding(
-                padding: const EdgeInsets.only(bottom: 7, right: 4),
+                padding: const EdgeInsets.only(bottom: 2, right: 4, left: 4),
                 child: Text(backend.host ?? '', style: AxTextStyles.mono.copyWith(fontSize: 10, color: AxColors.fg3)),
               ),
             ],
           ),
         ),
-        Expanded(child: _LivePane(key: ValueKey(_sessions[_tab]), session: _sessions[_tab])),
+        Expanded(child: _LivePane(key: ValueKey(currentSession), session: currentSession)),
       ],
     );
   }
@@ -147,6 +202,7 @@ class _TermTab extends StatelessWidget {
           SessionStatus.error => AxColors.bad,
           SessionStatus.closed => AxColors.fg3,
         };
+        final isTmux = session.label.contains('tmux');
         return GestureDetector(
           onTap: onTap,
           child: AnimatedContainer(
@@ -162,11 +218,15 @@ class _TermTab extends StatelessWidget {
               children: [
                 Container(width: 5, height: 5, decoration: BoxDecoration(color: dot, shape: BoxShape.circle)),
                 const SizedBox(width: 7),
+                if (isTmux) ...[
+                  const Icon(Icons.hub_rounded, size: 11, color: AxColors.warn),
+                  const SizedBox(width: 4),
+                ],
                 Text(session.label, style: AxTextStyles.mono.copyWith(fontSize: 11.5, color: selected ? AxColors.fg : AxColors.fg3)),
                 const SizedBox(width: 7),
                 GestureDetector(
                   onTap: onClose,
-                  child: Icon(Icons.close_rounded, size: 12, color: AxColors.fg3),
+                  child: const Icon(Icons.close_rounded, size: 12, color: AxColors.fg3),
                 ),
               ],
             ),
@@ -177,10 +237,8 @@ class _TermTab extends StatelessWidget {
   }
 }
 
-/// Renders one session's raw output and captures keystrokes to send as
-/// stdin. Output is unprocessed text (no ANSI/cursor-movement handling) -
-/// see TerminalSession's doc comment for why that's the deliberate scope
-/// here.
+/// Renders one session's output, captures keystrokes, and presents
+/// a mobile accessory bar for terminal controls (Ctrl, Esc, Tab, Arrows).
 class _LivePane extends StatefulWidget {
   final TerminalSession session;
   const _LivePane({super.key, required this.session});
@@ -192,11 +250,14 @@ class _LivePane extends StatefulWidget {
 class _LivePaneState extends State<_LivePane> {
   final _scroll = ScrollController();
   final _focus = FocusNode();
+  final _inputController = TextEditingController();
+  bool _ctrlActive = false;
 
   @override
   void dispose() {
     _scroll.dispose();
     _focus.dispose();
+    _inputController.dispose();
     super.dispose();
   }
 
@@ -207,11 +268,23 @@ class _LivePaneState extends State<_LivePane> {
     });
   }
 
+  void _sendCtrlKey(String keyChar) {
+    if (keyChar.isEmpty) return;
+    final code = keyChar.toUpperCase().codeUnitAt(0);
+    if (code >= 65 && code <= 90) {
+      final ctrlCode = code - 64; // 'A' (65) -> 1, 'C' (67) -> 3
+      widget.session.sendInput(String.fromCharCode(ctrlCode));
+    }
+  }
+
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) return KeyEventResult.ignored;
 
     final key = event.logicalKey;
     String? toSend;
+
+    final isCtrl = HardwareKeyboard.instance.isControlPressed || _ctrlActive;
+
     if (key == LogicalKeyboardKey.enter || key == LogicalKeyboardKey.numpadEnter) {
       toSend = '\r';
     } else if (key == LogicalKeyboardKey.backspace) {
@@ -228,12 +301,25 @@ class _LivePaneState extends State<_LivePane> {
       toSend = '\x1b[C';
     } else if (key == LogicalKeyboardKey.arrowLeft) {
       toSend = '\x1b[D';
-    } else if (key == LogicalKeyboardKey.keyC && HardwareKeyboard.instance.isControlPressed) {
+    } else if (isCtrl && key == LogicalKeyboardKey.keyC) {
       toSend = '\x03'; // Ctrl+C
-    } else if (key == LogicalKeyboardKey.keyD && HardwareKeyboard.instance.isControlPressed) {
+    } else if (isCtrl && key == LogicalKeyboardKey.keyD) {
       toSend = '\x04'; // Ctrl+D
+    } else if (isCtrl && key == LogicalKeyboardKey.keyZ) {
+      toSend = '\x1a'; // Ctrl+Z
+    } else if (isCtrl && key == LogicalKeyboardKey.keyL) {
+      toSend = '\x0c'; // Ctrl+L
     } else if (event.character != null && event.character!.isNotEmpty) {
+      if (_ctrlActive) {
+        _sendCtrlKey(event.character!);
+        setState(() => _ctrlActive = false);
+        return KeyEventResult.handled;
+      }
       toSend = event.character;
+    }
+
+    if (_ctrlActive && toSend != null) {
+      setState(() => _ctrlActive = false);
     }
 
     if (toSend != null) {
@@ -258,43 +344,175 @@ class _LivePaneState extends State<_LivePane> {
             child: Container(
               width: double.infinity,
               color: const Color(0xFF070807),
-              padding: const EdgeInsets.fromLTRB(16, 14, 16, 18),
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  if (widget.session.status == SessionStatus.error)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: Text(
-                        widget.session.error ?? 'Connection error',
-                        style: AxTextStyles.mono.copyWith(fontSize: 12, color: AxColors.bad),
+                  // Error or Reconnect Header
+                  if (widget.session.status == SessionStatus.error || widget.session.status == SessionStatus.closed)
+                    Container(
+                      color: widget.session.status == SessionStatus.error ? AxColors.bad.withValues(alpha: 0.15) : AxColors.s2,
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                      child: Row(
+                        children: [
+                          Icon(
+                            widget.session.status == SessionStatus.error ? Icons.error_outline_rounded : Icons.info_outline_rounded,
+                            size: 14,
+                            color: widget.session.status == SessionStatus.error ? AxColors.bad : AxColors.fg2,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              widget.session.status == SessionStatus.error
+                                  ? (widget.session.error ?? 'Connection error')
+                                  : 'Session closed (exit ${widget.session.exitCode ?? 0})',
+                              style: AxTextStyles.mono.copyWith(
+                                fontSize: 11.5,
+                                color: widget.session.status == SessionStatus.error ? AxColors.bad : AxColors.fg2,
+                              ),
+                            ),
+                          ),
+                          TextButton.icon(
+                            style: TextButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                              minimumSize: Size.zero,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              backgroundColor: AxColors.wash,
+                            ),
+                            icon: const Icon(Icons.refresh_rounded, size: 12, color: AxColors.accent),
+                            label: Text('Reconnect', style: AxTextStyles.sans.copyWith(fontSize: 11.5, color: AxColors.accent, fontWeight: FontWeight.bold)),
+                            onPressed: () => widget.session.reconnect(),
+                          ),
+                        ],
                       ),
                     ),
+
                   if (widget.session.status == SessionStatus.connecting)
-                    Text('connecting…', style: AxTextStyles.mono.copyWith(fontSize: 12, color: AxColors.fg3)),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                      child: Row(
+                        children: [
+                          const SizedBox(width: 10, height: 10, child: CircularProgressIndicator(strokeWidth: 1.5, color: AxColors.warn)),
+                          const SizedBox(width: 8),
+                          Text('connecting to shell…', style: AxTextStyles.mono.copyWith(fontSize: 11.5, color: AxColors.fg3)),
+                        ],
+                      ),
+                    ),
+
+                  // Main Terminal Scroll Output
                   Expanded(
-                    child: SingleChildScrollView(
-                      controller: _scroll,
-                      child: SelectableText(
-                        widget.session.output,
-                        style: AxTextStyles.mono.copyWith(fontSize: 12, height: 1.5, color: AxColors.fg),
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                      child: SingleChildScrollView(
+                        controller: _scroll,
+                        child: SelectableText(
+                          widget.session.output.isEmpty && widget.session.status == SessionStatus.connected
+                              ? 'Waiting for prompt…'
+                              : widget.session.output,
+                          style: AxTextStyles.mono.copyWith(fontSize: 12, height: 1.45, color: AxColors.fg),
+                        ),
                       ),
                     ),
                   ),
-                  if (widget.session.status == SessionStatus.closed)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 6),
-                      child: Text(
-                        'session ended${widget.session.exitCode != null ? " (exit ${widget.session.exitCode})" : ""}',
-                        style: AxTextStyles.mono.copyWith(fontSize: 11, color: AxColors.fg3),
-                      ),
-                    ),
+
+                  // Mobile Virtual Keyboard Accessory Bar
+                  _buildAccessoryBar(),
                 ],
               ),
             ),
           ),
         );
       },
+    );
+  }
+
+  Widget _buildAccessoryBar() {
+    return Container(
+      decoration: const BoxDecoration(
+        color: AxColors.s1,
+        border: Border(top: BorderSide(color: AxColors.line)),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            _AccessoryKey(label: 'ESC', onTap: () => widget.session.sendInput('\x1b')),
+            _AccessoryKey(label: 'TAB', onTap: () => widget.session.sendInput('\t')),
+            _AccessoryKey(
+              label: 'CTRL',
+              isActive: _ctrlActive,
+              onTap: () => setState(() => _ctrlActive = !_ctrlActive),
+            ),
+            _AccessoryKey(label: 'CTRL+C', onTap: () => widget.session.sendInput('\x03'), isAccent: true),
+            _AccessoryKey(label: 'CTRL+D', onTap: () => widget.session.sendInput('\x04')),
+            _AccessoryKey(label: '▲', onTap: () => widget.session.sendInput('\x1b[A')),
+            _AccessoryKey(label: '▼', onTap: () => widget.session.sendInput('\x1b[B')),
+            _AccessoryKey(label: 'CLEAR', onTap: () {
+              widget.session.clearOutput();
+              widget.session.sendInput('\x0c');
+            }),
+            _AccessoryKey(label: 'PASTE', onTap: () async {
+              final data = await Clipboard.getData('text/plain');
+              if (data?.text != null && data!.text!.isNotEmpty) {
+                widget.session.sendInput(data.text!);
+              }
+            }),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AccessoryKey extends StatelessWidget {
+  final String label;
+  final VoidCallback onTap;
+  final bool isActive;
+  final bool isAccent;
+
+  const _AccessoryKey({
+    required this.label,
+    required this.onTap,
+    this.isActive = false,
+    this.isAccent = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    Color bg = AxColors.s2;
+    Color fg = AxColors.fg2;
+    Border? border = Border.all(color: AxColors.line);
+
+    if (isActive) {
+      bg = AxColors.accent.withValues(alpha: 0.2);
+      fg = AxColors.accent;
+      border = Border.all(color: AxColors.accent);
+    } else if (isAccent) {
+      fg = AxColors.warn;
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 3),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(5),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: bg,
+            borderRadius: BorderRadius.circular(5),
+            border: border,
+          ),
+          child: Text(
+            label,
+            style: AxTextStyles.mono.copyWith(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: fg,
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

@@ -35,12 +35,33 @@ class TerminalSession extends ChangeNotifier {
   int? _exitCode;
   int? get exitCode => _exitCode;
 
+  ArchangeldConnection? _backend;
+  int _cols = 120;
+  int _rows = 32;
+  Timer? _pingTimer;
+
   TerminalSession({required this.label});
 
   void connect(ArchangeldConnection backend, {int cols = 120, int rows = 32}) {
+    _backend = backend;
+    _cols = cols;
+    _rows = rows;
+    _startConnection();
+  }
+
+  void _startConnection() {
+    if (_backend == null) return;
+    _sub?.cancel();
+    _channel?.sink.close();
+    _pingTimer?.cancel();
+
+    _status = SessionStatus.connecting;
+    _error = null;
+    notifyListeners();
+
     final Uri uri;
     try {
-      uri = backend.terminalWsUri();
+      uri = _backend!.terminalWsUri();
     } on StateError catch (e) {
       _status = SessionStatus.error;
       _error = e.message;
@@ -60,12 +81,14 @@ class TerminalSession extends ChangeNotifier {
     _sub = _channel!.stream.listen(
       _onMessage,
       onDone: () {
+        _pingTimer?.cancel();
         if (_status != SessionStatus.error) {
           _status = SessionStatus.closed;
           notifyListeners();
         }
       },
       onError: (e) {
+        _pingTimer?.cancel();
         _status = SessionStatus.error;
         _error = e.toString();
         notifyListeners();
@@ -73,23 +96,31 @@ class TerminalSession extends ChangeNotifier {
       cancelOnError: true,
     );
 
-    // Real dimensions first, matching the backend's own comment that it
-    // defaults to 24x80 and expects a resize frame right after connecting.
-    // Waits for `ready` first: web_socket_channel's own docs say sink
-    // writes aren't guaranteed to be delivered until the connection is
-    // actually established, so sending immediately risked losing this
-    // frame and leaving the PTY at the backend's 80x24 default.
     _channel!.ready.then((_) {
-      resize(cols, rows);
+      resize(_cols, _rows);
+      // Periodic ping every 45s to avoid backend 10m idle timeout during quiet sessions
+      _pingTimer?.cancel();
+      _pingTimer = Timer.periodic(const Duration(seconds: 45), (_) {
+        if (_status == SessionStatus.connected) {
+          _channel?.sink.add(jsonEncode({'type': 'ping'}));
+        }
+      });
     }).catchError((Object e) {
-      // Already surfaced via the stream's onError above in the normal
-      // case; this only fires if `ready` fails before the stream does.
       if (_status != SessionStatus.error) {
         _status = SessionStatus.error;
         _error = 'Could not open connection: $e';
         notifyListeners();
       }
     });
+  }
+
+  void reconnect() {
+    _startConnection();
+  }
+
+  void clearOutput() {
+    _output.clear();
+    notifyListeners();
   }
 
   void _onMessage(dynamic raw) {
@@ -105,7 +136,8 @@ class TerminalSession extends ChangeNotifier {
         final data = frame['data'] as String?;
         if (data == null) return;
         try {
-          _output.write(utf8.decode(base64.decode(data), allowMalformed: true));
+          final decoded = utf8.decode(base64.decode(data), allowMalformed: true);
+          _output.write(_cleanAnsi(decoded));
         } catch (_) {
           return;
         }
@@ -114,13 +146,25 @@ class TerminalSession extends ChangeNotifier {
       case 'exit':
         _exitCode = frame['code'] as int?;
         _status = SessionStatus.closed;
+        _pingTimer?.cancel();
         notifyListeners();
       case 'error':
         _error = frame['message'] as String?;
         _status = SessionStatus.error;
+        _pingTimer?.cancel();
         notifyListeners();
-      // 'pong' needs no handling; we don't currently send 'ping'.
+      case 'pong':
+        // Keep-alive acknowledged
+        break;
     }
+  }
+
+  /// Cleans ANSI escape sequences for smooth legible display in standard text views
+  /// while preserving spacing and structure.
+  static final RegExp _ansiRegex = RegExp(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])');
+  static String _cleanAnsi(String input) {
+    // Strip standard ANSI CSI / OSC sequences
+    return input.replaceAll(_ansiRegex, '');
   }
 
   void sendInput(String text) {
@@ -132,10 +176,13 @@ class TerminalSession extends ChangeNotifier {
   }
 
   void resize(int cols, int rows) {
+    _cols = cols;
+    _rows = rows;
     _channel?.sink.add(jsonEncode({'type': 'resize', 'cols': cols, 'rows': rows}));
   }
 
   void close() {
+    _pingTimer?.cancel();
     _sub?.cancel();
     _channel?.sink.close();
   }
