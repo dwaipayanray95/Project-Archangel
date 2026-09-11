@@ -148,6 +148,14 @@ class ArchangeldConnection extends ChangeNotifier {
     return Uri.parse('http://$_host/api/v1/system/processes/$pid/renice');
   }
 
+  /// `http://<host>/api/v1/system/reboot`
+  Uri systemRebootHttpUri() {
+    if (!isPaired) {
+      throw StateError('Not paired with a backend');
+    }
+    return Uri.parse('http://$_host/api/v1/system/reboot');
+  }
+
   /// `http://<host>/api/v1/files/list?path=...`
   Uri filesListHttpUri(String path) {
     if (!isPaired) {

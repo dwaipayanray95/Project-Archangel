@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../data/app_state.dart';
 import '../models/container_model.dart';
-import '../services/archangeld_connection.dart';
 import '../services/containers_service.dart';
 import '../theme/tokens.dart';
 import '../widgets/ax_widgets.dart';

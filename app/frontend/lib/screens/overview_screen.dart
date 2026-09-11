@@ -1,9 +1,13 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../data/app_state.dart';
-import '../data/mock_data.dart';
 import '../models/system_metrics.dart';
+import '../services/archangeld_connection.dart';
+import '../services/containers_service.dart';
+import '../services/devops_service.dart';
 import '../services/monitoring_service.dart';
+import '../services/wireguard_controller.dart';
 import '../theme/tokens.dart';
 import '../widgets/ax_widgets.dart';
 import '../widgets/sparkline.dart';
@@ -22,15 +26,15 @@ class _Tile {
   const _Tile(this.label, this.value, this.unit, this.sub, this.delta, this.deltaColor, this.color, this.icon, this.spark, this.go);
 }
 
-final _mockTiles = <_Tile>[
-  _Tile('CPU', '18', '%', '8 cores · 2.4GHz avg', '-2%', AxColors.accent, AxColors.accent, Icons.memory, const [.2, .3, .22, .4, .3, .5, .35, .18], AxSection.monitoring),
-  _Tile('MEMORY', '9.6', 'GB', 'of 15.6 GB · 61%', '+4%', AxColors.warn, AxColors.info, Icons.developer_board, const [.4, .45, .5, .48, .55, .58, .6, .61], AxSection.monitoring),
-  _Tile('DISK', '214', 'GB', 'of 512 GB · 45%', '+0.2%', AxColors.fg3, AxColors.fg, Icons.storage, const [.4, .41, .42, .42, .43, .44, .44, .45], AxSection.monitoring),
-  _Tile('NETWORK', '4.2', 'MB/s', '1.4 up · 2.8 down', '', AxColors.fg3, AxColors.accent, Icons.swap_vert, const [.1, .3, .2, .6, .4, .3, .5, .3], AxSection.monitoring),
-];
-
 List<_Tile> _buildTiles(SystemMetrics? metrics) {
-  if (metrics == null) return _mockTiles;
+  if (metrics == null) {
+    return const [
+      _Tile('CPU', '—', '%', 'Waiting for telemetry...', '', AxColors.fg3, AxColors.accent, Icons.memory, [0.0], AxSection.monitoring),
+      _Tile('MEMORY', '—', 'GB', 'Waiting for telemetry...', '', AxColors.fg3, AxColors.info, Icons.developer_board, [0.0], AxSection.monitoring),
+      _Tile('DISK', '—', 'GB', 'Waiting for telemetry...', '', AxColors.fg3, AxColors.fg, Icons.storage, [0.0], AxSection.monitoring),
+      _Tile('NETWORK', '—', 'MB/s', 'Waiting for telemetry...', '', AxColors.fg3, AxColors.accent, Icons.swap_vert, [0.0], AxSection.monitoring),
+    ];
+  }
 
   final cpu = metrics.cpu;
   final mem = metrics.memory;
@@ -105,12 +109,53 @@ List<_Tile> _buildTiles(SystemMetrics? metrics) {
   ];
 }
 
-class OverviewScreen extends StatelessWidget {
+class OverviewScreen extends StatefulWidget {
   const OverviewScreen({super.key});
+
+  @override
+  State<OverviewScreen> createState() => _OverviewScreenState();
+}
+
+class _OverviewScreenState extends State<OverviewScreen> {
+  Timer? _ticker;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final backend = context.read<ArchangeldConnection>();
+      if (backend.isPaired) {
+        context.read<MonitoringService>().start(backend);
+        context.read<ContainersService>().init(backend);
+        context.read<DevopsService>().init(backend);
+      }
+    });
+    // Trigger lightweight refresh every second to update "polled Xs ago" accurately
+    _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _ticker?.cancel();
+    super.dispose();
+  }
+
+  String _formatAgo(DateTime? lastPolled, bool isConnected) {
+    if (!isConnected) return 'connecting to telemetry...';
+    if (lastPolled == null) return 'telemetry active · live stream';
+    final elapsed = DateTime.now().difference(lastPolled).inSeconds;
+    if (elapsed <= 1) return 'all systems nominal · polled just now';
+    return 'all systems nominal · polled ${elapsed}s ago';
+  }
 
   @override
   Widget build(BuildContext context) {
     final app = context.read<AppState>();
+    final mon = context.watch<MonitoringService>();
+    final metrics = mon.metrics;
+    final isConnected = mon.isConnected;
     final wide = MediaQuery.of(context).size.width >= 760;
 
     return SingleChildScrollView(
@@ -127,7 +172,10 @@ class OverviewScreen extends StatelessWidget {
                   children: [
                     Text('Overview', style: AxTextStyles.h1),
                     const SizedBox(height: 3),
-                    Text('all systems nominal · polled 4s ago', style: AxTextStyles.mutedMono),
+                    Text(
+                      _formatAgo(mon.lastPolled, isConnected),
+                      style: AxTextStyles.mutedMono,
+                    ),
                   ],
                 ),
               ),
@@ -135,16 +183,29 @@ class OverviewScreen extends StatelessWidget {
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 5),
                   decoration: BoxDecoration(
-                    color: AxColors.wash,
+                    color: isConnected ? AxColors.wash : AxColors.s2,
                     borderRadius: BorderRadius.circular(AxRadius.pill),
-                    border: Border.all(color: AxColors.accent.withValues(alpha: 0.18)),
+                    border: Border.all(
+                      color: isConnected ? AxColors.accent.withValues(alpha: 0.18) : AxColors.line,
+                    ),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const StatusDot(color: AxColors.accent, size: 6),
+                      StatusDot(
+                        color: isConnected ? AxColors.accent : (mon.status == MonitoringStatus.connecting ? AxColors.warn : AxColors.fg3),
+                        size: 6,
+                        pulse: isConnected,
+                      ),
                       const SizedBox(width: 7),
-                      Text('Healthy', style: AxTextStyles.sans.copyWith(fontSize: 12, fontWeight: FontWeight.w600, color: AxColors.accent)),
+                      Text(
+                        isConnected ? 'Healthy' : (mon.status == MonitoringStatus.connecting ? 'Connecting' : 'Standby'),
+                        style: AxTextStyles.sans.copyWith(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: isConnected ? AxColors.accent : (mon.status == MonitoringStatus.connecting ? AxColors.warn : AxColors.fg3),
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -154,8 +215,7 @@ class OverviewScreen extends StatelessWidget {
           LayoutBuilder(
             builder: (context, c) {
               final cols = c.maxWidth >= 900 ? 4 : (c.maxWidth >= 560 ? 2 : 1);
-              final mon = context.watch<MonitoringService>();
-              final tiles = _buildTiles(mon.metrics);
+              final tiles = _buildTiles(metrics);
               return GridView.count(
                 crossAxisCount: cols,
                 shrinkWrap: true,
@@ -171,8 +231,8 @@ class OverviewScreen extends StatelessWidget {
           LayoutBuilder(
             builder: (context, c) {
               final narrow = c.maxWidth < 860;
-              final feed = _ActivityFeed();
-              final side = _IdentityAndActions();
+              final feed = const _ActivityFeed();
+              final side = const _IdentityAndActions();
               if (narrow) {
                 return Column(children: [feed, const SizedBox(height: 11), side]);
               }
@@ -234,9 +294,94 @@ class _StatTile extends StatelessWidget {
   }
 }
 
+class _ActivityItem {
+  final String actor;
+  final String text;
+  final String detail;
+  final Color color;
+  final String ago;
+  final VoidCallback? onTap;
+
+  const _ActivityItem({
+    required this.actor,
+    required this.text,
+    required this.detail,
+    required this.color,
+    required this.ago,
+    this.onTap,
+  });
+}
+
 class _ActivityFeed extends StatelessWidget {
+  const _ActivityFeed();
+
   @override
   Widget build(BuildContext context) {
+    final app = context.read<AppState>();
+    final contSvc = context.watch<ContainersService>();
+    final devSvc = context.watch<DevopsService>();
+    final monSvc = context.watch<MonitoringService>();
+
+    final items = <_ActivityItem>[];
+
+    // Build real items from containers
+    final containers = contSvc.overview?.containers ?? [];
+    for (final c in containers.take(4)) {
+      items.add(_ActivityItem(
+        actor: c.name,
+        text: c.running ? 'running' : 'stopped',
+        detail: '${c.image} · ${c.uptime.isNotEmpty ? c.uptime : (c.running ? "active" : "inactive")}',
+        color: c.running ? AxColors.accent : AxColors.warn,
+        ago: c.ports.isNotEmpty && c.ports != '—' ? c.ports : (c.running ? 'live' : 'idle'),
+        onTap: () => app.go(AxSection.containers),
+      ));
+    }
+
+    // Build real items from devops services and deployments
+    for (final s in devSvc.services.take(3)) {
+      items.add(_ActivityItem(
+        actor: s.name,
+        text: s.status,
+        detail: s.meta,
+        color: s.ok ? AxColors.accent : AxColors.bad,
+        ago: s.ok ? 'active' : 'warn',
+        onTap: () => app.go(AxSection.devops),
+      ));
+    }
+
+    for (final d in devSvc.deployments.take(2)) {
+      items.add(_ActivityItem(
+        actor: d.name,
+        text: d.status,
+        detail: d.meta,
+        color: d.ok ? AxColors.info : AxColors.bad,
+        ago: 'deploy',
+        onTap: () => app.go(AxSection.devops),
+      ));
+    }
+
+    // Fallback if no containers or services loaded yet
+    if (items.isEmpty) {
+      if (monSvc.isConnected) {
+        items.add(_ActivityItem(
+          actor: 'archangeld',
+          text: 'metrics connected',
+          detail: 'real-time telemetry link established',
+          color: AxColors.accent,
+          ago: 'live',
+          onTap: () => app.go(AxSection.monitoring),
+        ));
+      } else {
+        items.add(const _ActivityItem(
+          actor: 'system',
+          text: 'initializing services',
+          detail: 'connecting to host background daemons',
+          color: AxColors.fg3,
+          ago: '—',
+        ));
+      }
+    }
+
     return Container(
       decoration: BoxDecoration(
         color: AxColors.s1,
@@ -254,7 +399,7 @@ class _ActivityFeed extends StatelessWidget {
               children: [
                 Text('Activity', style: AxTextStyles.sans.copyWith(fontSize: 12.5, fontWeight: FontWeight.w700)),
                 const Spacer(),
-                const StatusDot(color: AxColors.accent, size: 5, pulse: true),
+                StatusDot(color: AxColors.accent, size: 5, pulse: monSvc.isConnected),
                 const SizedBox(width: 5),
                 Text('live', style: AxTextStyles.mono.copyWith(fontSize: 10, color: AxColors.fg3)),
               ],
@@ -264,40 +409,46 @@ class _ActivityFeed extends StatelessWidget {
             constraints: const BoxConstraints(maxHeight: 420),
             child: ListView.builder(
               shrinkWrap: true,
-              itemCount: feedPool.length,
+              physics: const ClampingScrollPhysics(),
+              itemCount: items.length,
               itemBuilder: (context, i) {
-                final f = feedPool[i];
-                return Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-                  decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: Color(0x0BE8F0E6)))),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.only(top: 5),
-                        child: Container(width: 6, height: 6, decoration: BoxDecoration(color: f.color, shape: BoxShape.circle)),
-                      ),
-                      const SizedBox(width: 11),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            RichText(
-                              text: TextSpan(
-                                style: AxTextStyles.sans.copyWith(fontSize: 12.5, height: 1.4),
-                                children: [
-                                  TextSpan(text: '${f.actor} ', style: const TextStyle(fontWeight: FontWeight.w600)),
-                                  TextSpan(text: f.text, style: const TextStyle(color: AxColors.fg2)),
-                                ],
-                              ),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(f.detail, style: AxTextStyles.mono.copyWith(fontSize: 10, color: AxColors.fg3)),
-                          ],
+                final f = items[i];
+                return InkWell(
+                  onTap: f.onTap,
+                  hoverColor: AxColors.s2,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                    decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: Color(0x0BE8F0E6)))),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.only(top: 5),
+                          child: Container(width: 6, height: 6, decoration: BoxDecoration(color: f.color, shape: BoxShape.circle)),
                         ),
-                      ),
-                      Text(f.ago, style: AxTextStyles.mono.copyWith(fontSize: 10, color: AxColors.fg3)),
-                    ],
+                        const SizedBox(width: 11),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              RichText(
+                                text: TextSpan(
+                                  style: AxTextStyles.sans.copyWith(fontSize: 12.5, height: 1.4),
+                                  children: [
+                                    TextSpan(text: '${f.actor} ', style: const TextStyle(fontWeight: FontWeight.w600)),
+                                    TextSpan(text: f.text, style: const TextStyle(color: AxColors.fg2)),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(f.detail, style: AxTextStyles.mono.copyWith(fontSize: 10, color: AxColors.fg3), maxLines: 1, overflow: TextOverflow.ellipsis),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(f.ago, style: AxTextStyles.mono.copyWith(fontSize: 10, color: AxColors.fg3)),
+                      ],
+                    ),
                   ),
                 );
               },
@@ -310,21 +461,101 @@ class _ActivityFeed extends StatelessWidget {
 }
 
 class _IdentityAndActions extends StatelessWidget {
+  const _IdentityAndActions();
+
+  void _confirmReboot(BuildContext context) {
+    final mon = context.read<MonitoringService>();
+
+    showDialog<void>(
+      context: context,
+      builder: (dialogCtx) {
+        return AlertDialog(
+          backgroundColor: AxColors.s1,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AxRadius.lg),
+            side: const BorderSide(color: AxColors.line),
+          ),
+          title: Row(
+            children: [
+              const Icon(Icons.warning_amber_rounded, color: AxColors.warn, size: 22),
+              const SizedBox(width: 8),
+              Text('Reboot Host', style: AxTextStyles.sans.copyWith(fontSize: 16, fontWeight: FontWeight.w600)),
+            ],
+          ),
+          content: Text(
+            'Are you sure you want to reboot the remote server?\n\nActive connections and background tasks will be interrupted until the host boots back up.',
+            style: AxTextStyles.sans.copyWith(fontSize: 13, color: AxColors.fg2, height: 1.4),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogCtx).pop(),
+              child: Text('Cancel', style: AxTextStyles.sans.copyWith(color: AxColors.fg3)),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: AxColors.bad,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AxRadius.sm)),
+              ),
+              onPressed: () async {
+                Navigator.of(dialogCtx).pop();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Issuing reboot signal to server...')),
+                );
+                final res = await mon.rebootHost();
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      backgroundColor: res.success ? AxColors.s2 : AxColors.bad,
+                      content: Text(
+                        res.message,
+                        style: TextStyle(color: res.success ? AxColors.accent : Colors.white),
+                      ),
+                    ),
+                  );
+                }
+              },
+              child: const Text('Reboot Server'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final identity = const [
-      ['Host', 'Archangel-MK1'],
-      ['Region', 'fra1'],
-      ['OS', 'Ubuntu 24.04.4 LTS'],
-      ['Kernel', '6.8.0-45-generic'],
-      ['Tunnel', 'wg0 · 10.8.0.1'],
-      ['Uptime', '42d 6h 18m'],
-    ];
-    final actions = const [
-      ['Reboot', Icons.restart_alt_rounded, AxColors.warn],
-      ['Terminal', Icons.chevron_right_rounded, AxColors.fg],
-      ['Backup', Icons.save_alt_rounded, AxColors.fg],
-      ['Lock', Icons.lock_outline_rounded, AxColors.bad],
+    final app = context.read<AppState>();
+    final backend = context.watch<ArchangeldConnection>();
+    final wg = context.watch<WireGuardController>();
+    final mon = context.watch<MonitoringService>();
+    final metrics = mon.metrics;
+
+    final hostname = (metrics?.host.hostname.isNotEmpty ?? false)
+        ? metrics!.host.hostname
+        : (backend.host?.isNotEmpty ?? false ? backend.host! : 'archangel-vps');
+
+    final os = (metrics?.host.os.isNotEmpty ?? false)
+        ? metrics!.host.os
+        : 'Linux / POSIX';
+
+    final kernel = (metrics?.host.kernel.isNotEmpty ?? false)
+        ? metrics!.host.kernel
+        : (metrics?.host.arch.isNotEmpty ?? false ? metrics!.host.arch : '—');
+
+    final tunnelStatusText = wg.config != null
+        ? '${wg.status.name} · ${wg.config!.interfaceAddress}'
+        : 'disconnected';
+
+    final uptime = metrics != null ? metrics.detailedUptimeLabel : '—';
+
+    final identity = [
+      ['Host', hostname],
+      ['OS', os],
+      ['Kernel', kernel],
+      ['Tunnel', tunnelStatusText],
+      ['Uptime', uptime],
+      ['Backend', backend.backendVersion ?? 'v0.2.14'],
     ];
 
     return Column(
@@ -348,12 +579,18 @@ class _IdentityAndActions extends StatelessWidget {
                       child: const Icon(Icons.dns_outlined, size: 15, color: AxColors.accent),
                     ),
                     const SizedBox(width: 9),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('Archangel-MK1', style: AxTextStyles.mono.copyWith(fontSize: 13, fontWeight: FontWeight.w500)),
-                        Text('bare-metal VPS · fra1', style: AxTextStyles.sans.copyWith(fontSize: 11, color: AxColors.fg3)),
-                      ],
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(hostname, style: AxTextStyles.mono.copyWith(fontSize: 13, fontWeight: FontWeight.w500), overflow: TextOverflow.ellipsis),
+                          Text(
+                            wg.config != null ? 'wireguard endpoint · ${wg.config!.serverAddress}' : 'remote host',
+                            style: AxTextStyles.sans.copyWith(fontSize: 11, color: AxColors.fg3),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ),
                     ),
                   ],
                 ),
@@ -361,7 +598,7 @@ class _IdentityAndActions extends StatelessWidget {
               for (final row in identity)
                 Container(
                   padding: const EdgeInsets.symmetric(vertical: 6),
-                  decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: Color(0x0AE8F0E6)))),
+                  decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: Color(0x0BE8F0E6)))),
                   child: Row(
                     children: [
                       SizedBox(width: 78, child: Text(row[0], style: AxTextStyles.sans.copyWith(fontSize: 11, color: AxColors.fg3))),
@@ -388,18 +625,30 @@ class _IdentityAndActions extends StatelessWidget {
                 crossAxisSpacing: 7,
                 childAspectRatio: 2.6,
                 children: [
-                  for (final a in actions)
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10),
-                      decoration: BoxDecoration(color: AxColors.s2, borderRadius: BorderRadius.circular(11), border: Border.all(color: AxColors.line)),
-                      child: Row(
-                        children: [
-                          Icon(a[1] as IconData, size: 14, color: a[2] as Color),
-                          const SizedBox(width: 8),
-                          Text(a[0] as String, style: AxTextStyles.sans.copyWith(fontSize: 12, fontWeight: FontWeight.w600, color: a[2] as Color)),
-                        ],
-                      ),
-                    ),
+                  _ActionButton(
+                    label: 'Terminal',
+                    icon: Icons.terminal_rounded,
+                    color: AxColors.fg,
+                    onTap: () => app.go(AxSection.terminal),
+                  ),
+                  _ActionButton(
+                    label: 'DevOps',
+                    icon: Icons.layers_outlined,
+                    color: AxColors.fg,
+                    onTap: () => app.go(AxSection.devops),
+                  ),
+                  _ActionButton(
+                    label: 'Files',
+                    icon: Icons.folder_outlined,
+                    color: AxColors.fg,
+                    onTap: () => app.go(AxSection.files),
+                  ),
+                  _ActionButton(
+                    label: 'Reboot',
+                    icon: Icons.restart_alt_rounded,
+                    color: AxColors.warn,
+                    onTap: () => _confirmReboot(context),
+                  ),
                 ],
               ),
             ],
@@ -409,3 +658,51 @@ class _IdentityAndActions extends StatelessWidget {
     );
   }
 }
+
+class _ActionButton extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final Color color;
+  final VoidCallback onTap;
+
+  const _ActionButton({
+    required this.label,
+    required this.icon,
+    required this.color,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: AxColors.s2,
+      borderRadius: BorderRadius.circular(11),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(11),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(11),
+            border: Border.all(color: AxColors.line),
+          ),
+          child: Row(
+            children: [
+              Icon(icon, size: 14, color: color),
+              const SizedBox(width: 8),
+              Text(
+                label,
+                style: AxTextStyles.sans.copyWith(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: color,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+

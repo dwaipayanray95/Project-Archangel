@@ -33,6 +33,7 @@ func NewRouter(verify auth.Verifier) http.Handler {
 	mux.Handle("GET /api/v1/system/processes", auth.Middleware(verify, http.HandlerFunc(system.ProcessesHandler)))
 	mux.Handle("POST /api/v1/system/processes/{pid}/kill", auth.Middleware(verify, http.HandlerFunc(system.ProcessKillHandler)))
 	mux.Handle("POST /api/v1/system/processes/{pid}/renice", auth.Middleware(verify, http.HandlerFunc(system.ProcessReniceHandler)))
+	mux.Handle("POST /api/v1/system/reboot", auth.Middleware(verify, http.HandlerFunc(system.RebootHandler)))
 	mux.Handle("GET /ws/stats", auth.Middleware(verify, http.HandlerFunc(system.StatsWsHandler)))
 
 	// Files explorer & previewer

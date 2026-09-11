@@ -32,6 +32,9 @@ class MonitoringService extends ChangeNotifier {
   String? _error;
   String? get error => _error;
 
+  DateTime? _lastPolled;
+  DateTime? get lastPolled => _lastPolled;
+
   WebSocketChannel? _wsChannel;
   StreamSubscription? _wsSub;
   Timer? _procTimer;
@@ -148,6 +151,7 @@ class MonitoringService extends ChangeNotifier {
     try {
       final data = jsonDecode(raw.toString()) as Map<String, dynamic>;
       _metrics = SystemMetrics.fromJson(data);
+      _lastPolled = DateTime.now();
       if (_status != MonitoringStatus.connected) {
         _status = MonitoringStatus.connected;
         if (_desiredIntervalMs != 2000 && _wsChannel != null) {
@@ -178,6 +182,7 @@ class MonitoringService extends ChangeNotifier {
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body) as Map<String, dynamic>;
         _metrics = SystemMetrics.fromJson(data);
+        _lastPolled = DateTime.now();
         if (_status != MonitoringStatus.connected) {
           _status = MonitoringStatus.connected;
         }
@@ -273,6 +278,37 @@ class MonitoringService extends ChangeNotifier {
       if (res.statusCode == 200) {
         await fetchProcesses();
         return ProcessActionResult(success: true, message: 'Priority updated to $priority');
+      } else if (res.statusCode == 401 || res.statusCode == 403) {
+        return const ProcessActionResult(success: false, message: 'Unauthorized (invalid or expired token)');
+      } else {
+        final errText = res.body.isNotEmpty ? res.body.trim() : 'HTTP ${res.statusCode}';
+        return ProcessActionResult(success: false, message: 'Server error: $errText');
+      }
+    } catch (e) {
+      return ProcessActionResult(success: false, message: 'Connection failed: $e');
+    }
+  }
+
+  Future<ProcessActionResult> rebootHost() async {
+    final backend = _backend;
+    if (backend == null || !backend.isPaired) {
+      return const ProcessActionResult(success: false, message: 'Backend is not paired');
+    }
+    final token = backend.token;
+    if (token == null || token.isEmpty) {
+      return const ProcessActionResult(success: false, message: 'Missing authentication token');
+    }
+
+    try {
+      final res = await http.post(
+        backend.systemRebootHttpUri(),
+        headers: {
+          'X-Archangel-Token': token,
+          'Content-Type': 'application/json',
+        },
+      );
+      if (res.statusCode == 200) {
+        return const ProcessActionResult(success: true, message: 'Reboot initiated successfully');
       } else if (res.statusCode == 401 || res.statusCode == 403) {
         return const ProcessActionResult(success: false, message: 'Unauthorized (invalid or expired token)');
       } else {

@@ -261,9 +261,33 @@ class NetworkMetrics {
   double get totalMbPerSec => rxMbPerSec + txMbPerSec;
 }
 
+class HostInfo {
+  final String hostname;
+  final String os;
+  final String kernel;
+  final String arch;
+
+  const HostInfo({
+    this.hostname = '',
+    this.os = '',
+    this.kernel = '',
+    this.arch = '',
+  });
+
+  factory HostInfo.fromJson(Map<String, dynamic> json) {
+    return HostInfo(
+      hostname: json['hostname'] as String? ?? '',
+      os: json['os'] as String? ?? '',
+      kernel: json['kernel'] as String? ?? '',
+      arch: json['arch'] as String? ?? '',
+    );
+  }
+}
+
 class SystemMetrics {
   final int timestamp;
   final int uptimeSeconds;
+  final HostInfo host;
   final CPUMetrics cpu;
   final MemoryMetrics memory;
   final DiskMetrics disk;
@@ -272,6 +296,7 @@ class SystemMetrics {
   const SystemMetrics({
     required this.timestamp,
     this.uptimeSeconds = 0,
+    this.host = const HostInfo(),
     required this.cpu,
     required this.memory,
     required this.disk,
@@ -282,6 +307,7 @@ class SystemMetrics {
     return SystemMetrics(
       timestamp: (json['timestamp'] as num?)?.toInt() ?? 0,
       uptimeSeconds: (json['uptime_seconds'] as num?)?.toInt() ?? 0,
+      host: HostInfo.fromJson((json['host'] as Map<String, dynamic>?) ?? const {}),
       cpu: CPUMetrics.fromJson(
           (json['cpu'] as Map<String, dynamic>?) ?? const {}),
       memory: MemoryMetrics.fromJson(
@@ -294,13 +320,25 @@ class SystemMetrics {
   }
 
   String get uptimeLabel {
-    if (uptimeSeconds <= 0) return '42d';
+    if (uptimeSeconds <= 0) return '—';
     final days = uptimeSeconds ~/ 86400;
     final hours = (uptimeSeconds % 86400) ~/ 3600;
     if (days > 0) return '${days}d';
     if (hours > 0) return '${hours}h';
     final mins = (uptimeSeconds % 3600) ~/ 60;
     return '${mins}m';
+  }
+
+  String get detailedUptimeLabel {
+    if (uptimeSeconds <= 0) return '—';
+    final days = uptimeSeconds ~/ 86400;
+    final hours = (uptimeSeconds % 86400) ~/ 3600;
+    final mins = (uptimeSeconds % 3600) ~/ 60;
+    final parts = <String>[];
+    if (days > 0) parts.add('${days}d');
+    if (hours > 0 || days > 0) parts.add('${hours}h');
+    parts.add('${mins}m');
+    return parts.join(' ');
   }
 }
 

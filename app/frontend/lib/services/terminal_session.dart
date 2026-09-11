@@ -97,6 +97,10 @@ class TerminalSession extends ChangeNotifier {
     );
 
     _channel!.ready.then((_) {
+      if (_status != SessionStatus.connected) {
+        _status = SessionStatus.connected;
+        notifyListeners();
+      }
       resize(_cols, _rows);
       // Periodic ping every 45s to avoid backend 10m idle timeout during quiet sessions
       _pingTimer?.cancel();

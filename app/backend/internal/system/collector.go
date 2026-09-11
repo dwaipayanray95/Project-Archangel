@@ -3,6 +3,7 @@ package system
 import (
 	"bufio"
 	"os"
+	"os/exec"
 	"runtime"
 	"strconv"
 	"strings"
@@ -71,9 +72,17 @@ type NetworkMetrics struct {
 	History       []float64            `json:"history"`
 }
 
+type HostInfo struct {
+	Hostname string `json:"hostname"`
+	OS       string `json:"os"`
+	Kernel   string `json:"kernel"`
+	Arch     string `json:"arch"`
+}
+
 type SystemMetrics struct {
 	Timestamp     int64          `json:"timestamp"`
 	UptimeSeconds int64          `json:"uptime_seconds"`
+	Host          HostInfo       `json:"host"`
 	CPU           CPUMetrics     `json:"cpu"`
 	Memory        MemoryMetrics  `json:"memory"`
 	Disk          DiskMetrics    `json:"disk"`
@@ -114,7 +123,8 @@ type Collector struct {
 	diskHistory []float64
 	netHistory  []float64
 
-	latest SystemMetrics
+	hostInfo HostInfo
+	latest   SystemMetrics
 }
 
 var (
@@ -139,6 +149,7 @@ func NewCollector() *Collector {
 		memHistory:  make([]float64, 0, maxHistory),
 		diskHistory: make([]float64, 0, maxHistory),
 		netHistory:  make([]float64, 0, maxHistory),
+		hostInfo:    readHostInfo(),
 	}
 }
 
@@ -190,6 +201,7 @@ func (c *Collector) Collect() SystemMetrics {
 	res := SystemMetrics{
 		Timestamp:     now.Unix(),
 		UptimeSeconds: uptime,
+		Host:          c.hostInfo,
 		CPU:           cpu,
 		Memory:        mem,
 		Disk:          disk,
@@ -598,3 +610,48 @@ func (c *Collector) collectNetwork(elapsed float64) NetworkMetrics {
 func round(val float64) float64 {
 	return float64(int(val*10)) / 10.0
 }
+
+func readHostInfo() HostInfo {
+	hostname, _ := os.Hostname()
+	if hostname == "" {
+		hostname = "archangel-host"
+	}
+
+	kernel := ""
+	if out, err := exec.Command("uname", "-r").Output(); err == nil {
+		kernel = strings.TrimSpace(string(out))
+	} else {
+		kernel = runtime.GOOS
+	}
+
+	osName := ""
+	if runtime.GOOS == "linux" {
+		osName = readLinuxOSName()
+	} else if runtime.GOOS == "darwin" {
+		osName = "macOS " + kernel
+	} else {
+		osName = runtime.GOOS
+	}
+
+	return HostInfo{
+		Hostname: hostname,
+		OS:       osName,
+		Kernel:   kernel,
+		Arch:     runtime.GOARCH,
+	}
+}
+
+func readLinuxOSName() string {
+	if data, err := os.ReadFile("/etc/os-release"); err == nil {
+		scanner := bufio.NewScanner(strings.NewReader(string(data)))
+		for scanner.Scan() {
+			line := scanner.Text()
+			if strings.HasPrefix(line, "PRETTY_NAME=") {
+				val := strings.TrimPrefix(line, "PRETTY_NAME=")
+				return strings.Trim(val, `"'`)
+			}
+		}
+	}
+	return "Linux"
+}
+

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"os/exec"
+	"runtime"
 	"strconv"
 	"time"
 
@@ -109,6 +111,29 @@ func ProcessReniceHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "pid": pid, "priority": req.Priority})
+}
+
+// RebootHandler handles POST /api/v1/system/reboot
+func RebootHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	slog.Warn("system reboot requested via API")
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"status":  "ok",
+		"message": "reboot initiated",
+	})
+
+	go func() {
+		time.Sleep(1 * time.Second)
+		if runtime.GOOS == "linux" {
+			_ = exec.Command("sudo", "systemctl", "reboot").Run()
+			_ = exec.Command("sudo", "reboot").Run()
+		}
+	}()
 }
 
 // StatsWsHandler handles GET /ws/stats for live streaming metrics
