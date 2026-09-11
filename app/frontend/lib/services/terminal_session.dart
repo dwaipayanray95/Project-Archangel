@@ -137,7 +137,7 @@ class TerminalSession extends ChangeNotifier {
         if (data == null) return;
         try {
           final decoded = utf8.decode(base64.decode(data), allowMalformed: true);
-          _output.write(_cleanAnsi(decoded));
+          _appendDecodedText(_cleanAnsi(decoded));
         } catch (_) {
           return;
         }
@@ -156,6 +156,25 @@ class TerminalSession extends ChangeNotifier {
       case 'pong':
         // Keep-alive acknowledged
         break;
+    }
+  }
+
+  /// Appends decoded text to buffer, interpreting \b (backspace) properly
+  /// rather than leaving non-printable box characters.
+  void _appendDecodedText(String text) {
+    if (text.isEmpty) return;
+    for (int i = 0; i < text.length; i++) {
+      final char = text[i];
+      if (char == '\b' || char == '\x7f') {
+        // Backspace: remove last character if buffer is not empty
+        final current = _output.toString();
+        if (current.isNotEmpty) {
+          _output.clear();
+          _output.write(current.substring(0, current.length - 1));
+        }
+      } else {
+        _output.write(char);
+      }
     }
   }
 

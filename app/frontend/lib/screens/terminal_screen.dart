@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -434,10 +435,10 @@ class _LivePaneState extends State<_LivePane> {
                 // Main Terminal Scroll Output
                 Expanded(
                   child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
                     onTap: () {
-                      // Tapping canvas requests focus or prompts mobile input
                       _focus.requestFocus();
-                      if (!_showMobileInput) {
+                      if (_isMobile && !_showMobileInput) {
                         setState(() => _showMobileInput = true);
                         _mobileInputFocus.requestFocus();
                       }
@@ -457,8 +458,8 @@ class _LivePaneState extends State<_LivePane> {
                   ),
                 ),
 
-                // Inline Mobile Direct Text Input Row (when software keyboard is engaged)
-                if (_showMobileInput)
+                // Inline Mobile Direct Text Input Row (only on mobile when requested)
+                if (_isMobile && _showMobileInput)
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                     decoration: const BoxDecoration(
@@ -506,8 +507,8 @@ class _LivePaneState extends State<_LivePane> {
                     ),
                   ),
 
-                // Mobile Virtual Keyboard Accessory Bar
-                _buildAccessoryBar(),
+                // Virtual Keyboard Accessory Bar - shown exclusively on touch mobile platforms
+                if (_isMobile) _buildAccessoryBar(),
               ],
             ),
           ),
@@ -515,6 +516,9 @@ class _LivePaneState extends State<_LivePane> {
       },
     );
   }
+
+  bool get _isMobile =>
+      !kIsWeb && (defaultTargetPlatform == TargetPlatform.iOS || defaultTargetPlatform == TargetPlatform.android);
 
   Widget _buildAccessoryBar() {
     return Container(
