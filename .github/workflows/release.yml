@@ -1,9 +1,8 @@
 name: Release Archangel
 
-# Single tag-triggered release pipeline for both the backend and the
-# frontend. Tag = the ARCHANGEL (project) version from the root VERSION
-# file. There is no manual dispatch and no diff-based auto-detection -
-# the tag's suffix alone decides what gets built:
+# Single release pipeline for both the backend and the frontend. Tag =
+# the ARCHANGEL (project) version from the root VERSION file. The tag's
+# suffix alone decides what gets built:
 #
 #   v1.2.3-b   backend only
 #   v1.2.3-f   frontend only (macOS + Windows + Android)
@@ -15,10 +14,14 @@ name: Release Archangel
 #   git tag v1.2.3 && git push origin v1.2.3
 #
 # ...or by running this workflow manually from the Actions tab ("Run
-# workflow") and typing the tag name - that run only creates and pushes
-# the tag (see create-tag below); the resulting tag push then triggers
-# a second, normal run of this same workflow that does the actual
-# building, exactly as if you'd pushed the tag yourself from the CLI.
+# workflow"): pick what to release (both / backend / frontend) and the
+# tag is derived automatically from VERSION's ARCHANGEL line (plus -b/-f
+# if you picked one side) - no need to type or precompute a tag
+# yourself. That run creates+pushes the tag AND builds in the same run
+# (a tag pushed with the default GITHUB_TOKEN does not re-trigger this
+# workflow's own `push: tags` event - that's a deliberate GitHub Actions
+# anti-loop rule - so plan resolves everything up front for both entry
+# points instead of relying on a second, tag-triggered run).
 
 on:
   push:
@@ -26,10 +29,14 @@ on:
       - "v*"
   workflow_dispatch:
     inputs:
-      tag:
-        description: "Tag to create and release (vX.Y.Z, vX.Y.Z-b backend-only, or vX.Y.Z-f frontend-only)"
-        required: true
-        type: string
+      target:
+        description: "What to release"
+        type: choice
+        options:
+          - both
+          - backend
+          - frontend
+        default: both
 
 env:
   FLUTTER_VERSION: "3.29.3"
@@ -39,53 +46,47 @@ permissions:
   contents: write
 
 jobs:
-  # Manual-dispatch entry point: creates and pushes the tag the user
-  # typed in, then stops - it never builds anything itself. Pushing the
-  # tag fires this workflow's own `push: tags` trigger, which is what
-  # actually runs plan/build-*, so there's exactly one code path that
-  # builds a release regardless of how the tag came to exist.
-  create-tag:
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Validate and push tag
-        run: |
-          set -euo pipefail
-          tag="${{ inputs.tag }}"
-
-          if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[bf])?$ ]]; then
-            echo "::error::Tag '$tag' doesn't match vX.Y.Z, vX.Y.Z-b, or vX.Y.Z-f."
-            exit 1
-          fi
-
-          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
-            echo "::error::Tag $tag already exists on origin."
-            exit 1
-          fi
-
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag "$tag" "${{ github.sha }}"
-          git push origin "$tag"
-
-  # Resolves the tag suffix into per-target flags, and generates the
-  # version manifest every build job publishes alongside its own
-  # artifacts (see update_check_service.dart, which is what actually
-  # reads this back from GitHub in the app).
+  # Resolves what to build and which tag it belongs to (deriving and
+  # pushing a new tag from VERSION on a manual dispatch run), and
+  # generates the version manifest every build job publishes alongside
+  # its own artifacts (see update_check_service.dart, which is what
+  # actually reads this back from GitHub in the app).
   plan:
-    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     outputs:
       backend: ${{ steps.resolve.outputs.backend }}
       frontend: ${{ steps.resolve.outputs.frontend }}
+      tag: ${{ steps.resolve.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
 
       - id: resolve
         run: |
-          tag="${{ github.ref_name }}"
+          set -euo pipefail
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            archangel=$(awk '/^ARCHANGEL/ {print $2}' VERSION)
+            case "${{ inputs.target }}" in
+              backend) suffix="-b" ;;
+              frontend) suffix="-f" ;;
+              *) suffix="" ;;
+            esac
+            tag="v${archangel}${suffix}"
+
+            if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+              echo "::error::Tag $tag already exists on origin - bump VERSION's ARCHANGEL line first." >&2
+              exit 1
+            fi
+
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag "$tag" "${{ github.sha }}"
+            git push origin "$tag"
+          else
+            tag="${{ github.ref_name }}"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
           case "$tag" in
             *-b)
               echo "backend=true" >> "$GITHUB_OUTPUT"
@@ -122,7 +123,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          tag="${{ github.ref_name }}"
+          tag="${{ steps.resolve.outputs.tag }}"
           suffix=""
           case "$tag" in
             *-b) suffix="-b" ;;
@@ -268,6 +269,7 @@ jobs:
 
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.plan.outputs.tag }}
           files: |
             app/frontend/build/macos/Build/Products/Release/Archangel-macos.zip
             version-manifest.json
@@ -325,6 +327,7 @@ jobs:
 
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.plan.outputs.tag }}
           files: |
             app/frontend/build/Archangel-windows.zip
             version-manifest.json
@@ -386,6 +389,7 @@ jobs:
 
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.plan.outputs.tag }}
           files: |
             app/frontend/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
             version-manifest.json
@@ -418,6 +422,7 @@ jobs:
 
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.plan.outputs.tag }}
           files: |
             app/backend/bin/archangeld-amd64
             app/backend/bin/archangeld-arm64
