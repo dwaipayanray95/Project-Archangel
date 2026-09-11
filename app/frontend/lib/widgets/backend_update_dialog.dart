@@ -49,6 +49,7 @@ class _BackendUpdateDialogState extends State<BackendUpdateDialog> {
   final _passphraseController = TextEditingController();
   bool _loadingSavedKey = true;
   bool _connecting = false;
+  bool _rememberKey = false;
   String? _connectError;
 
   SshTransport? _transport;
@@ -80,6 +81,7 @@ class _BackendUpdateDialogState extends State<BackendUpdateDialog> {
         _hostController.text = creds.host;
         _usernameController.text = creds.username;
         _privateKeyController.text = creds.privateKeyPem;
+        _rememberKey = true;
       }
       _loadingSavedKey = false;
     });
@@ -129,6 +131,13 @@ class _BackendUpdateDialogState extends State<BackendUpdateDialog> {
         passphrase: passphrase.isEmpty ? null : passphrase,
         onUnknownHostKey: _confirmHostKey,
       );
+
+      if (_rememberKey) {
+        await saveSshCredentials(SavedSshCredentials(host: host, username: username, privateKeyPem: privateKey));
+      } else {
+        await clearSavedSshCredentials();
+      }
+
       if (!mounted) return;
       _transport = transport;
       setState(() {
@@ -236,6 +245,21 @@ class _BackendUpdateDialogState extends State<BackendUpdateDialog> {
           const SizedBox(height: 10),
           _label('SSH key passphrase (leave blank if none)'),
           _textField(_passphraseController, obscure: true),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Checkbox(
+                value: _rememberKey,
+                onChanged: (v) => setState(() => _rememberKey = v ?? false),
+              ),
+              Expanded(
+                child: Text(
+                  'Remember this key for future server management from the app',
+                  style: AxTextStyles.sans.copyWith(fontSize: 12, color: AxColors.fg2),
+                ),
+              ),
+            ],
+          ),
           if (_connectError != null) ...[
             const SizedBox(height: 10),
             Text(_connectError!, style: AxTextStyles.mono.copyWith(fontSize: 11.5, color: AxColors.bad)),

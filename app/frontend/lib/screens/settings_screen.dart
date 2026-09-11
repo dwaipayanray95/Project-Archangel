@@ -10,6 +10,7 @@ import '../services/wireguard_controller.dart';
 import '../theme/tokens.dart';
 import '../widgets/ax_widgets.dart';
 import '../widgets/backend_update_dialog.dart';
+import '../widgets/manage_ssh_key_dialog.dart';
 import '../widgets/pairing_dialog.dart';
 import '../widgets/uninstall_dialog.dart';
 
@@ -188,6 +189,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                   ),
                   if (backend.isPaired) ...[
+                    const SizedBox(height: 11),
+                    AxCard(
+                      padding: const EdgeInsets.all(15),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('SSH key', style: AxTextStyles.sans.copyWith(fontSize: 12.5, fontWeight: FontWeight.w700)),
+                          const SizedBox(height: 8),
+                          Text(
+                            'View, replace, or forget the key remembered for backend updates and uninstall.',
+                            style: AxTextStyles.sans.copyWith(fontSize: 11.5, color: AxColors.fg3, height: 1.4),
+                          ),
+                          const SizedBox(height: 10),
+                          OutlinedButton(
+                            onPressed: () => showManageSshKeyDialog(context),
+                            child: const Text('Manage SSH key'),
+                          ),
+                        ],
+                      ),
+                    ),
                     const SizedBox(height: 11),
                     AxCard(
                       padding: const EdgeInsets.all(15),
