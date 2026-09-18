@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
 import '../models/container_model.dart';
@@ -77,10 +77,30 @@ class ContainersService extends ChangeNotifier {
         _error = null;
       } else {
         _error = 'Failed to fetch containers (HTTP ${res.statusCode})';
+        _overview ??= const DockerOverviewModel(
+          dockerAvailable: false,
+          engineVersion: 'unreachable',
+          runningCount: 0,
+          stoppedCount: 0,
+          totalImagesSize: '0 B',
+          containers: [],
+          stacks: [],
+          stackMeta: {},
+        );
       }
     } catch (e) {
       debugPrint('Error fetching docker containers: $e');
       _error = e.toString();
+      _overview ??= const DockerOverviewModel(
+        dockerAvailable: false,
+        engineVersion: 'unreachable',
+        runningCount: 0,
+        stoppedCount: 0,
+        totalImagesSize: '0 B',
+        containers: [],
+        stacks: [],
+        stackMeta: {},
+      );
     } finally {
       _loading = false;
       notifyListeners();
@@ -148,7 +168,9 @@ class ContainersService extends ChangeNotifier {
 
   void stopLogStream() {
     _closeLogsStream();
-    notifyListeners();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      notifyListeners();
+    });
   }
 
   void _closeLogsStream() {
