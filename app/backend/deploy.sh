@@ -79,7 +79,9 @@ else
   sudo useradd --system --create-home --home-dir /home/archangel --shell /bin/bash archangel
   echo "    Created archangel system user with home /home/archangel."
 fi
-sudo mkdir -p /opt/archangel /etc/archangel
+sudo mkdir -p /opt/archangel/deploy /home/archangel/deploy /srv/deploy /etc/archangel
+sudo chown -R archangel:archangel /opt/archangel/deploy /home/archangel/deploy /srv/deploy
+sudo chmod 775 /opt/archangel/deploy /home/archangel/deploy /srv/deploy
 sudo chown root:archangel /etc/archangel
 sudo chmod 750 /etc/archangel
 

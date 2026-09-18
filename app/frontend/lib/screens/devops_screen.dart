@@ -477,20 +477,21 @@ class _ScriptEditorDialogState extends State<_ScriptEditorDialog> {
       _error = null;
     });
 
-    final ok = await widget.service.saveDeployment(name, _contentCtrl.text);
+    final res = await widget.service.saveDeployment(name, _contentCtrl.text);
     if (!mounted) return;
     setState(() => _saving = false);
 
+    final ok = res['success'] == true;
     if (ok) {
       Navigator.of(context).pop();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Deployment script $name saved.')),
       );
       if (runAfter) {
-        final res = await widget.service.runDeployment(name);
-        if (mounted && res != null) {
-          final msg = res['message'] ?? '';
-          final out = res['output'] ?? '';
+        final runRes = await widget.service.runDeployment(name);
+        if (mounted && runRes != null) {
+          final msg = runRes['message'] ?? '';
+          final out = runRes['output'] ?? '';
           showDialog(
             context: context,
             builder: (ctx) => AlertDialog(
@@ -525,7 +526,8 @@ class _ScriptEditorDialogState extends State<_ScriptEditorDialog> {
         }
       }
     } else {
-      setState(() => _error = 'Failed to save deployment script. Check permissions on host.');
+      final errorMsg = res['message'] as String? ?? 'Failed to save deployment script. Check permissions on host.';
+      setState(() => _error = errorMsg);
     }
   }
 

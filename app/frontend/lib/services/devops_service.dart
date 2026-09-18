@@ -197,9 +197,11 @@ class DevopsService extends ChangeNotifier {
     }
   }
 
-  Future<bool> saveDeployment(String name, String content) async {
+  Future<Map<String, dynamic>> saveDeployment(String name, String content) async {
     final backend = _backend;
-    if (backend == null || !backend.isPaired || backend.token == null) return false;
+    if (backend == null || !backend.isPaired || backend.token == null) {
+      return {'success': false, 'message': 'Not connected to backend'};
+    }
 
     try {
       final res = await http.post(
@@ -214,10 +216,20 @@ class DevopsService extends ChangeNotifier {
         }),
       );
       fetchAll();
-      return res.statusCode == 200;
+      String message = res.statusCode == 200 ? 'Success' : 'Failed to save script';
+      try {
+        final data = jsonDecode(res.body) as Map<String, dynamic>;
+        if (data.containsKey('message')) {
+          message = data['message'] as String;
+        }
+      } catch (_) {}
+      return {
+        'success': res.statusCode == 200,
+        'message': message,
+      };
     } catch (e) {
       debugPrint('Error saving deployment: $e');
-      return false;
+      return {'success': false, 'message': e.toString()};
     }
   }
 

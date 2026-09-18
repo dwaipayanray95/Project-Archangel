@@ -10,7 +10,13 @@ import (
 	"time"
 )
 
-var defaultDeployDirs = []string{"/srv/deploy", "/srv/scripts", "/var/scripts"}
+var defaultDeployDirs = []string{
+	"/opt/archangel/deploy",
+	"/home/archangel/deploy",
+	"/srv/deploy",
+	"/srv/scripts",
+	"/var/scripts",
+}
 
 func getDeployDirs() []string {
 	dirs := []string{}
@@ -76,37 +82,50 @@ func validateScriptName(name string) error {
 	return nil
 }
 
-// CreateOrUpdateDeployment creates or updates a deployment script in /srv/deploy.
+// isDirWritable checks if a directory is writable by attempting to create and remove a temporary test file.
+func isDirWritable(dir string) bool {
+	testFile := filepath.Join(dir, fmt.Sprintf(".perm_test_%d", time.Now().UnixNano()))
+	if err := os.WriteFile(testFile, []byte("ok"), 0600); err != nil {
+		return false
+	}
+	_ = os.Remove(testFile)
+	return true
+}
+
+// CreateOrUpdateDeployment creates or updates a deployment script in the first writable deployment directory.
 func CreateOrUpdateDeployment(name string, content string) error {
 	if err := validateScriptName(name); err != nil {
 		return err
 	}
 
 	dirs := getDeployDirs()
-	var targetDir string
+
+	// 1. If the file already exists in one of the dirs, update it in place if writable
 	for _, dir := range dirs {
-		if _, err := os.Stat(dir); err == nil {
-			targetDir = dir
-			break
+		targetPath := filepath.Join(dir, name)
+		if _, err := os.Stat(targetPath); err == nil {
+			if err := os.WriteFile(targetPath, []byte(content), 0755); err == nil {
+				return nil
+			}
 		}
 	}
 
-	if targetDir == "" {
-		primary := dirs[0]
-		if err := os.MkdirAll(primary, 0755); err == nil {
-			targetDir = primary
+	// 2. Otherwise find the first writable directory (creating it if needed)
+	var lastErr error
+	for _, dir := range dirs {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			lastErr = err
+			continue
+		}
+		targetPath := filepath.Join(dir, name)
+		if err := os.WriteFile(targetPath, []byte(content), 0755); err == nil {
+			return nil
 		} else {
-			fallback := filepath.Join(os.TempDir(), "archangel-deploy")
-			_ = os.MkdirAll(fallback, 0755)
-			targetDir = fallback
+			lastErr = err
 		}
 	}
 
-	targetPath := filepath.Join(targetDir, name)
-	if err := os.WriteFile(targetPath, []byte(content), 0755); err != nil {
-		return fmt.Errorf("failed to write deployment script: %w", err)
-	}
-	return nil
+	return fmt.Errorf("failed to write deployment script to any deploy directory (last error: %w)", lastErr)
 }
 
 // GetDeploymentContent reads the source code of a deployment script.

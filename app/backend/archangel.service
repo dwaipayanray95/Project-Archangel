@@ -33,7 +33,7 @@ NoNewPrivileges=false
 ProtectSystem=full
 PrivateTmp=true
 WorkingDirectory=/home/archangel
-ReadWritePaths=/home/archangel /opt/archangel
+ReadWritePaths=/home/archangel /opt/archangel /srv/deploy
 ReadOnlyPaths=/etc/archangel
 
 [Install]
