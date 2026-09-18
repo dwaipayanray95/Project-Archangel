@@ -1,9 +1,12 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../data/app_state.dart';
 import '../services/app_version.dart';
 import '../services/archangeld_connection.dart';
+import '../services/semver.dart';
 import '../services/tunnel_config.dart';
 import '../services/update_check_service.dart';
 import '../services/wireguard_controller.dart';
@@ -38,7 +41,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final updates = context.watch<UpdateCheckService>();
     final ver = AppVersion.current;
     final backendVer = backend.isPaired
-        ? (backend.backendVersion != null ? 'v${backend.backendVersion}' : 'checking…')
+        ? (backend.backendVersion != null
+            ? 'v${backend.backendVersion}'
+            : (backend.backendChecking ? 'checking…' : (backend.backendVersionError ?? 'offline')))
         : 'not paired';
     final plainRows = [
       ['Host', 'Archangel-MK1'],
@@ -166,19 +171,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           'Archangel version',
                           'v${AppVersion.archangel}',
                           divider: false,
-                          updateAvailable: updates.latestArchangel != null && updates.latestArchangel != AppVersion.archangel ? updates.latestArchangel : null,
+                          updateAvailable: isUpdateAvailable(current: AppVersion.archangel, latest: updates.latestArchangel)
+                              ? updates.latestArchangel
+                              : null,
                         ),
                         _KvRow(
                           'App version',
                           'v$ver',
                           divider: false,
-                          updateAvailable: updates.latestFrontend != null && updates.latestFrontend != ver ? updates.latestFrontend : null,
+                          updateAvailable: isUpdateAvailable(current: ver, latest: updates.latestFrontend)
+                              ? updates.latestFrontend
+                              : null,
                         ),
                         _KvRow(
                           'Backend version',
                           backendVer,
                           divider: false,
-                          updateAvailable: backend.isPaired && updates.latestBackend != null && updates.latestBackend != backend.backendVersion
+                          updateAvailable: backend.isPaired && isUpdateAvailable(current: backend.backendVersion, latest: updates.latestBackend)
                               ? updates.latestBackend
                               : null,
                           onUpdateTap: (backend.isPaired && updates.latestBackend != null && updates.backendTag != null)
@@ -485,6 +494,48 @@ class _TunnelCard extends StatelessWidget {
               padding: const EdgeInsets.only(top: 6),
               child: Text(wg.lastError!, style: AxTextStyles.mono.copyWith(fontSize: 10.5, color: AxColors.bad)),
             ),
+          if (Platform.isMacOS && !wg.isMacosHelperInstalled) ...[
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.all(11),
+              decoration: BoxDecoration(
+                color: AxColors.s2,
+                borderRadius: BorderRadius.circular(9),
+                border: Border.all(color: AxColors.accent.withValues(alpha: 0.28)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.shield_outlined, size: 14, color: AxColors.accent),
+                      const SizedBox(width: 6),
+                      Text(
+                        'Seamless WireGuard Tunnel',
+                        style: AxTextStyles.sans.copyWith(fontSize: 11.5, fontWeight: FontWeight.w700, color: AxColors.fg),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Archangel needs a one-time permission to control the VPN tunnel seamlessly without prompting you every time.',
+                    style: AxTextStyles.sans.copyWith(fontSize: 11, color: AxColors.fg2, height: 1.4),
+                  ),
+                  const SizedBox(height: 8),
+                  FilledButton.tonalIcon(
+                    onPressed: wg.installingMacosHelper ? null : () => wg.installMacosHelper(),
+                    icon: wg.installingMacosHelper
+                        ? const SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 1.5))
+                        : const Icon(Icons.lock_open_rounded, size: 13),
+                    label: Text(
+                      wg.installingMacosHelper ? 'Authorizing…' : 'Enable Seamless Tunnel',
+                      style: AxTextStyles.sans.copyWith(fontSize: 11, fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
           const SizedBox(height: 12),
           Row(
             children: [

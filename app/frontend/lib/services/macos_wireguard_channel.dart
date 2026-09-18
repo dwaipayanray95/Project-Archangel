@@ -20,4 +20,13 @@ class MacosWireGuardChannel {
     final s = await _channel.invokeMethod<String>('status');
     return s ?? 'disconnected';
   }
+
+  Future<bool> isHelperInstalled() async {
+    final res = await _channel.invokeMethod<bool>('isHelperInstalled');
+    return res ?? false;
+  }
+
+  Future<void> installHelper() async {
+    await _channel.invokeMethod<void>('installHelper');
+  }
 }

@@ -59,6 +59,12 @@ class WireGuardController extends ChangeNotifier {
   String? _lastError;
   String? get lastError => _lastError;
 
+  bool _isMacosHelperInstalled = false;
+  bool get isMacosHelperInstalled => _isMacosHelperInstalled;
+
+  bool _installingMacosHelper = false;
+  bool get installingMacosHelper => _installingMacosHelper;
+
   bool _initialized = false;
 
   /// True once [bootstrap] has finished loading the saved config (whether
@@ -85,6 +91,7 @@ class WireGuardController extends ChangeNotifier {
         // No stage stream on this backend yet - status is set directly by
         // connect()/disconnect() below instead of an event stream.
         _status = TunnelStatus.disconnected;
+        await checkMacosHelper();
         return;
       }
 
@@ -204,6 +211,32 @@ class WireGuardController extends ChangeNotifier {
       await _wg.stopVpn();
     } catch (e) {
       _lastError = e.toString();
+      notifyListeners();
+    }
+  }
+
+  Future<void> checkMacosHelper() async {
+    if (!_useMacosChannel) return;
+    try {
+      _isMacosHelperInstalled = await _macos.isHelperInstalled();
+      notifyListeners();
+    } catch (_) {}
+  }
+
+  Future<bool> installMacosHelper() async {
+    if (!_useMacosChannel) return false;
+    _installingMacosHelper = true;
+    _lastError = null;
+    notifyListeners();
+    try {
+      await _macos.installHelper();
+      _isMacosHelperInstalled = await _macos.isHelperInstalled();
+      return _isMacosHelperInstalled;
+    } catch (e) {
+      _lastError = 'Failed to enable seamless tunnel: $e';
+      return false;
+    } finally {
+      _installingMacosHelper = false;
       notifyListeners();
     }
   }

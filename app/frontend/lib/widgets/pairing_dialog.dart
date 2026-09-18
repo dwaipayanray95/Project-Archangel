@@ -36,7 +36,12 @@ Future<void> showPairingDialog(BuildContext context) {
             final bundle = PairingBundle.parse(raw);
             await wg.pair(bundle.tunnel.toWgQuickConfig());
             await backend.pair(host: bundle.host, token: bundle.token);
-            if (context.mounted) Navigator.of(context).pop();
+            if (context.mounted) {
+              Navigator.of(context).pop();
+              if (Platform.isMacOS && !wg.isMacosHelperInstalled) {
+                _promptEnableSeamlessTunnel(context, wg);
+              }
+            }
           } on FormatException catch (e) {
             setState(() => error = e.message);
           } catch (e) {
@@ -96,6 +101,43 @@ Future<void> showPairingDialog(BuildContext context) {
           actions: [
             TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
             TextButton(onPressed: () => submit(controller.text), child: const Text('Pair')),
+          ],
+        );
+      },
+    ),
+  );
+}
+
+void _promptEnableSeamlessTunnel(BuildContext context, WireGuardController wg) {
+  showDialog<void>(
+    context: context,
+    builder: (ctx) => StatefulBuilder(
+      builder: (ctx, setDialogState) {
+        return AlertDialog(
+          backgroundColor: AxColors.s2,
+          title: Row(
+            children: [
+              Icon(Icons.shield_outlined, size: 18, color: AxColors.accent),
+              const SizedBox(width: 8),
+              Text('Seamless Tunnel', style: AxTextStyles.sans.copyWith(fontSize: 15, fontWeight: FontWeight.w700)),
+            ],
+          ),
+          content: Text(
+            'Archangel needs a one-time permission to control the VPN tunnel seamlessly without prompting you every time.',
+            style: AxTextStyles.sans.copyWith(fontSize: 12.5, color: AxColors.fg2, height: 1.45),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Maybe later'),
+            ),
+            FilledButton.tonal(
+              onPressed: () async {
+                Navigator.of(ctx).pop();
+                await wg.installMacosHelper();
+              },
+              child: const Text('Enable Seamless Tunnel'),
+            ),
           ],
         );
       },

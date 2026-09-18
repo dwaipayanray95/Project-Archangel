@@ -50,6 +50,7 @@ class _BackendUpdateDialogState extends State<BackendUpdateDialog> {
   bool _loadingSavedKey = true;
   bool _connecting = false;
   bool _rememberKey = false;
+  bool _credsLoadedFromSaved = false;
   String? _connectError;
 
   SshTransport? _transport;
@@ -66,15 +67,22 @@ class _BackendUpdateDialogState extends State<BackendUpdateDialog> {
   Future<void> _restoreSavedKey() async {
     final creds = await unlockSavedSshCredentials(context);
     if (!mounted) return;
-    setState(() {
-      if (creds != null) {
+    if (creds != null) {
+      setState(() {
         _hostController.text = creds.host;
         _usernameController.text = creds.username;
         _privateKeyController.text = creds.privateKeyPem;
         _rememberKey = true;
-      }
-      _loadingSavedKey = false;
-    });
+        _credsLoadedFromSaved = true;
+        _loadingSavedKey = false;
+      });
+      // Streamline: user entered PIN and has saved credentials ready, immediately connect & update!
+      await _connect();
+    } else {
+      setState(() {
+        _loadingSavedKey = false;
+      });
+    }
   }
 
   @override
@@ -122,15 +130,18 @@ class _BackendUpdateDialogState extends State<BackendUpdateDialog> {
         onUnknownHostKey: _confirmHostKey,
       );
 
+      // Only prompt to set/confirm PIN if this is a newly entered key, not if we loaded it from saved credentials
       if (_rememberKey) {
-        final pin = await promptForPin(
-          context,
-          title: 'Set a PIN',
-          message: 'Choose a PIN to protect this key. You\'ll need it to unlock the key later - there\'s no way to recover it without the PIN.',
-          confirm: true,
-        );
-        if (pin != null) {
-          await saveSshCredentials(pin, SavedSshCredentials(host: host, username: username, privateKeyPem: privateKey));
+        if (!_credsLoadedFromSaved) {
+          final pin = await promptForPin(
+            context,
+            title: 'Set a PIN',
+            message: 'Choose a PIN to protect this key. You\'ll need it to unlock the key later - there\'s no way to recover it without the PIN.',
+            confirm: true,
+          );
+          if (pin != null) {
+            await saveSshCredentials(pin, SavedSshCredentials(host: host, username: username, privateKeyPem: privateKey));
+          }
         }
       } else {
         await clearSavedSshCredentials();

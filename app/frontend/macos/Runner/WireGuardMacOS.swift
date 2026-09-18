@@ -48,12 +48,27 @@ class WireGuardMacOS: NSObject {
     private var wgPID: Int32?
     private var interfaceName: String?
     private var uapiSocketFD: Int32 = -1
+    private static let helperPath = "/usr/local/bin/archangel-wg-helper"
+    private static let sudoersPath = "/etc/sudoers.d/archangel-wg"
 
     static func register(with messenger: FlutterBinaryMessenger) {
         let channel = FlutterMethodChannel(name: channelName, binaryMessenger: messenger)
         let instance = WireGuardMacOS()
         channel.setMethodCallHandler { call, result in
             switch call.method {
+            case "isHelperInstalled":
+                result(instance.isHelperInstalled())
+            case "installHelper":
+                DispatchQueue.global(qos: .userInitiated).async {
+                    do {
+                        try instance.installHelper()
+                        DispatchQueue.main.async { result(true) }
+                    } catch WGMacError.message(let msg) {
+                        DispatchQueue.main.async { result(FlutterError(code: "install_failed", message: msg, details: nil)) }
+                    } catch {
+                        DispatchQueue.main.async { result(FlutterError(code: "install_failed", message: "\(error)", details: nil)) }
+                    }
+                }
             case "connect":
                 guard let args = call.arguments as? [String: Any],
                       let config = args["config"] as? String
@@ -82,6 +97,126 @@ class WireGuardMacOS: NSObject {
         }
     }
 
+    // MARK: - Helper Status & Installation
+
+    private func isHelperInstalled() -> Bool {
+        guard FileManager.default.fileExists(atPath: WireGuardMacOS.helperPath),
+              FileManager.default.fileExists(atPath: WireGuardMacOS.sudoersPath) else {
+            return false
+        }
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
+        task.arguments = ["-n", WireGuardMacOS.helperPath, "status"]
+        do {
+            try task.run()
+            task.waitUntilExit()
+            return task.terminationStatus == 0
+        } catch {
+            return false
+        }
+    }
+
+    private func installHelper() throws {
+        let scriptContent = """
+#!/bin/bash
+set -euo pipefail
+
+CMD="${1:-status}"
+
+case "$CMD" in
+  status)
+    exit 0
+    ;;
+  up)
+    BINARY="$2"
+    IFNAME="$3"
+    SOCKPATH="$4"
+    LOGPATH="$5"
+    PIDPATH="$6"
+    IP="$7"
+    MASK="$8"
+    shift 8
+
+    mkdir -p /var/run/wireguard && chmod 755 /var/run/wireguard
+    WG_PROCESS_FOREGROUND=1 "$BINARY" "$IFNAME" > "$LOGPATH" 2>&1 &
+    echo $! > "$PIDPATH"
+
+    for i in $(seq 1 25); do
+      if [ -S "$SOCKPATH" ]; then
+        chmod 666 "$SOCKPATH"
+        break
+      fi
+      sleep 0.1
+    done
+
+    ifconfig "$IFNAME" inet "$IP" "$IP" netmask "$MASK" up
+    while [ "$#" -gt 0 ]; do
+      CIDR="$1"
+      if [ "$CIDR" != "0.0.0.0/0" ]; then
+        case "$CIDR" in
+          */*) NET="$CIDR" ;;
+          *)   NET="$CIDR/32" ;;
+        esac
+        route -n add -net "$NET" -interface "$IFNAME" >/dev/null 2>&1 || true
+      fi
+      shift
+    done
+    exit 0
+    ;;
+  down)
+    PID="$2"
+    BINARY="$3"
+    IFNAME="$4"
+    if [ -n "$PID" ] && [ "$PID" -gt 0 ] 2>/dev/null; then
+      kill "$PID" 2>/dev/null || true
+    fi
+    if [ -n "$BINARY" ] && [ -n "$IFNAME" ]; then
+      pkill -f "$BINARY $IFNAME" 2>/dev/null || true
+    fi
+    exit 0
+    ;;
+  *)
+    echo "Unknown command $CMD" >&2
+    exit 1
+    ;;
+esac
+"""
+        let sudoersContent = "%admin ALL=(ALL) NOPASSWD: \(WireGuardMacOS.helperPath)\\n"
+
+        // Base64 encode the files to safely transfer them into the elevated script without quote/escape issues
+        guard let scriptData = scriptContent.data(using: .utf8),
+              let sudoersData = sudoersContent.data(using: .utf8) else {
+            throw WGMacError.message("Failed to encode helper contents")
+        }
+        let scriptB64 = scriptData.base64EncodedString()
+        let sudoersB64 = sudoersData.base64EncodedString()
+
+        let installCmd = """
+mkdir -p /usr/local/bin /etc/sudoers.d
+echo '\(scriptB64)' | /usr/bin/base64 --decode > '\(WireGuardMacOS.helperPath)'
+chmod 755 '\(WireGuardMacOS.helperPath)'
+chown root:wheel '\(WireGuardMacOS.helperPath)'
+echo '\(sudoersB64)' | /usr/bin/base64 --decode > '\(WireGuardMacOS.sudoersPath)'
+chmod 440 '\(WireGuardMacOS.sudoersPath)'
+chown root:wheel '\(WireGuardMacOS.sudoersPath)'
+"""
+        let escaped = installCmd.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+        let osascript = "do shell script \"\(escaped)\" with administrator privileges"
+
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        task.arguments = ["-e", osascript]
+        try task.run()
+        task.waitUntilExit()
+        guard task.terminationStatus == 0 else {
+            throw WGMacError.message("Administrator authorization was declined or failed.")
+        }
+
+        if !isHelperInstalled() {
+            throw WGMacError.message("Helper installed but verification failed.")
+        }
+    }
+
     // MARK: - Connect
 
     private func connect(config: String) throws {
@@ -89,66 +224,73 @@ class WireGuardMacOS: NSObject {
 
         let parsed = try WGConfig.parse(config)
         let binaryPath = try bundledWireguardGoPath()
-
-        // Pick the interface name ourselves (rather than passing a bare
-        // "utun" and parsing wireguard-go's log for whatever it picked) -
-        // real-hardware testing showed wireguard-go's default behavior is
-        // to daemonize (double-fork into the background), which detaches
-        // it from both our log redirection and the PID `$!` would have
-        // captured. WG_PROCESS_FOREGROUND=1 below stops the daemonizing,
-        // but computing the name ourselves removes the log-parsing race
-        // entirely regardless.
         let ifname = try nextFreeUtunName()
 
         let logPath = NSTemporaryDirectory() + "archangel-wireguard-go.log"
         let pidPath = logPath + ".pid"
         FileManager.default.createFile(atPath: logPath, contents: nil)
 
-        // Needs root to create the utun device at all - osascript's "with
-        // administrator privileges" gives the native macOS password
-        // prompt, no separate helper tool or Developer Program entitlement
-        // required.
-        let launchCommand = "WG_PROCESS_FOREGROUND=1 '\(binaryPath)' \(ifname) > '\(logPath)' 2>&1 & echo $! > '\(pidPath)'"
-        let escaped = launchCommand.replacingOccurrences(of: "\"", with: "\\\"")
-        let osascript = "do shell script \"\(escaped)\" with administrator privileges"
+        let parts = parsed.address.split(separator: "/")
+        guard parts.count == 2, let prefixLen = Int(parts[1]) else {
+            throw WGMacError.message("Invalid interface address: \(parsed.address)")
+        }
+        let ip = String(parts[0])
+        let mask = WGConfig.prefixLengthToMask(prefixLen)
+        let sockPath = "/var/run/wireguard/\(ifname).sock"
 
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        task.arguments = ["-e", osascript]
-        try task.run()
-        task.waitUntilExit()
-        guard task.terminationStatus == 0 else {
-            throw WGMacError.message("Could not start wireguard-go (admin authorization declined or failed).")
+        if isHelperInstalled() {
+            // Promptless execution via helper
+            var args = ["-n", WireGuardMacOS.helperPath, "up", binaryPath, ifname, sockPath, logPath, pidPath, ip, mask]
+            for cidr in parsed.allowedIps {
+                args.append(cidr)
+            }
+            let task = Process()
+            task.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
+            task.arguments = args
+            try task.run()
+            task.waitUntilExit()
+            guard task.terminationStatus == 0 else {
+                throw WGMacError.message("Seamless helper failed to start WireGuard tunnel (code \(task.terminationStatus)).")
+            }
+        } else {
+            // Fallback: single consolidated osascript prompt
+            var routeCmds = ""
+            for cidr in parsed.allowedIps where cidr != "0.0.0.0/0" {
+                let net = cidr.contains("/") ? cidr : "\(cidr)/32"
+                routeCmds += " && (route -n add -net \(net) -interface \(ifname) || true)"
+            }
+
+            let launchCommand = """
+mkdir -p /var/run/wireguard && chmod 755 /var/run/wireguard
+WG_PROCESS_FOREGROUND=1 '\(binaryPath)' \(ifname) > '\(logPath)' 2>&1 &
+echo $! > '\(pidPath)'
+for i in $(seq 1 25); do
+  if [ -S '\(sockPath)' ]; then
+    chmod 666 '\(sockPath)'
+    break
+  fi
+  sleep 0.1
+done
+ifconfig \(ifname) inet \(ip) \(ip) netmask \(mask) up\(routeCmds)
+"""
+            let escaped = launchCommand.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+            let osascript = "do shell script \"\(escaped)\" with administrator privileges"
+
+            let task = Process()
+            task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+            task.arguments = ["-e", osascript]
+            try task.run()
+            task.waitUntilExit()
+            guard task.terminationStatus == 0 else {
+                throw WGMacError.message("Could not start wireguard-go (admin authorization declined or failed).")
+            }
         }
 
         self.interfaceName = ifname
         self.wgPID = try? readPID(pidPath: pidPath)
 
         try waitForUapiSocket(ifname: ifname, logPath: logPath, timeout: 5.0)
-        // wireguard-go (running as root) creates both /var/run/wireguard/
-        // and the socket itself as root-owned - our own connect() call
-        // below runs as the logged-in user, not root, so without this it
-        // fails with a plain "could not connect" (a permission failure,
-        // not a missing-file one; the socket already exists by this
-        // point). Single elevated call, reusing the same admin-privileges
-        // path everything else here already needs.
-        try relaxUapiSocketPermissions(ifname: ifname)
         try configureViaUAPI(ifname: ifname, config: parsed)
-        try bringUpInterface(ifname: ifname, address: parsed.address, allowedIps: parsed.allowedIps)
-    }
-
-    private func relaxUapiSocketPermissions(ifname: String) throws {
-        let cmd = "chmod 755 /var/run/wireguard && chmod 666 /var/run/wireguard/\(ifname).sock"
-        let escaped = cmd.replacingOccurrences(of: "\"", with: "\\\"")
-        let osascript = "do shell script \"\(escaped)\" with administrator privileges"
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        task.arguments = ["-e", osascript]
-        try task.run()
-        task.waitUntilExit()
-        guard task.terminationStatus == 0 else {
-            throw WGMacError.message("Could not relax permissions on wireguard-go's UAPI socket.")
-        }
     }
 
     /// Lists currently-existing utunN interfaces via `ifconfig -l` (a plain
@@ -332,23 +474,24 @@ class WireGuardMacOS: NSObject {
         }
 
         // wireguard-go runs as root (launched via administrator
-        // privileges), so killing it needs the same elevation - a plain
-        // Process.terminate() from this unprivileged process can't touch
-        // it. Real-hardware testing surfaced this the hard way: the
-        // previous version tracked and terminated the *osascript* wrapper
-        // instead (which had already exited), leaking a root wireguard-go
-        // process on every single connect attempt. Kill by PID and by an
-        // exact-match pkill together (single admin prompt) so a stale or
-        // missing PID still gets cleaned up.
+        // privileges or helper), so killing it needs the same elevation.
         if let pid = wgPID, let binaryPath = try? bundledWireguardGoPath(), let ifname = interfaceName {
-            let cmd = "kill \(pid) 2>/dev/null; pkill -f '\(binaryPath) \(ifname)' 2>/dev/null; true"
-            let escaped = cmd.replacingOccurrences(of: "\"", with: "\\\"")
-            let osascript = "do shell script \"\(escaped)\" with administrator privileges"
-            let task = Process()
-            task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-            task.arguments = ["-e", osascript]
-            try? task.run()
-            task.waitUntilExit()
+            if isHelperInstalled() {
+                let task = Process()
+                task.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
+                task.arguments = ["-n", WireGuardMacOS.helperPath, "down", "\(pid)", binaryPath, ifname]
+                try? task.run()
+                task.waitUntilExit()
+            } else {
+                let cmd = "kill \(pid) 2>/dev/null; pkill -f '\(binaryPath) \(ifname)' 2>/dev/null; true"
+                let escaped = cmd.replacingOccurrences(of: "\"", with: "\\\"")
+                let osascript = "do shell script \"\(escaped)\" with administrator privileges"
+                let task = Process()
+                task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+                task.arguments = ["-e", osascript]
+                try? task.run()
+                task.waitUntilExit()
+            }
         }
 
         wgPID = nil

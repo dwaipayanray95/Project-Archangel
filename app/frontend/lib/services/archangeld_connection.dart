@@ -30,6 +30,12 @@ class ArchangeldConnection extends ChangeNotifier {
   String? _backendVersion;
   String? get backendVersion => _backendVersion;
 
+  bool _backendChecking = false;
+  bool get backendChecking => _backendChecking;
+
+  String? _backendVersionError;
+  String? get backendVersionError => _backendVersionError;
+
   bool _loaded = false;
 
   /// True once [load] has finished reading storage - see
@@ -80,21 +86,32 @@ class ArchangeldConnection extends ChangeNotifier {
   }
 
   /// Fetches the backend's version from /api/v1/health and caches it.
-  /// Failures are silent - this only feeds an informational Settings row.
+  /// Sets error state if backend is unreachable (e.g. WireGuard tunnel down).
   Future<void> refreshBackendVersion() async {
     if (!isPaired) return;
+    _backendChecking = true;
+    _backendVersionError = null;
+    notifyListeners();
+
     try {
-      final res = await http.get(healthHttpUri());
+      final res = await http.get(healthHttpUri()).timeout(const Duration(seconds: 4));
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body) as Map<String, dynamic>;
         final v = data['version'] as String?;
         if (v != null && v.isNotEmpty) {
           _backendVersion = v;
-          notifyListeners();
+          _backendVersionError = null;
         }
+      } else {
+        _backendVersionError = 'HTTP ${res.statusCode}';
       }
-    } catch (_) {
-      // informational only - leave _backendVersion as-is
+    } on TimeoutException {
+      _backendVersionError = 'tunnel offline';
+    } catch (e) {
+      _backendVersionError = 'offline';
+    } finally {
+      _backendChecking = false;
+      notifyListeners();
     }
   }
 
