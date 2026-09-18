@@ -391,6 +391,13 @@ if [ -f /etc/archangel/config.yaml ]; then
   fi
 fi
 
+# Ensure Docker Engine & Compose are installed during backend updates
+if ! command -v docker >/dev/null 2>&1; then
+  curl -fsSL https://get.docker.com | sh
+  sudo systemctl enable --now docker
+fi
+sudo usermod -aG docker archangel || true
+
 sudo systemctl daemon-reload
 ''';
     final syncResult = await _exec(syncScript);

@@ -48,6 +48,18 @@ else
   sudo ufw --force enable > /dev/null
 fi
 
+echo "==> Docker Engine"
+if command -v docker > /dev/null; then
+  echo "    Docker Engine already installed - skipping."
+else
+  echo "    Installing Docker Engine via official script..."
+  curl -fsSL https://get.docker.com | sh
+  sudo systemctl enable --now docker
+fi
+if id archangel > /dev/null 2>&1; then
+  sudo usermod -aG docker archangel || true
+fi
+
 echo "==> Done. Current state:"
 free -h
 sudo ufw status

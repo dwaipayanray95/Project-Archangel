@@ -86,7 +86,19 @@ sudo chmod 750 /etc/archangel
 # Hybrid Cockpit: grant passwordless sudo to archangel user
 echo "archangel ALL=(ALL) NOPASSWD: ALL" | sudo tee /etc/sudoers.d/archangel > /dev/null
 sudo chmod 440 /etc/sudoers.d/archangel
-echo "    Sudoers configuration and directories ready."
+
+# Ensure Docker Engine & Compose are installed and archangel user is in docker group
+if ! command -v docker &> /dev/null; then
+  echo "    Docker Engine not found - installing official Docker packages..."
+  curl -fsSL https://get.docker.com | sh
+  sudo systemctl enable --now docker
+  echo "    Docker Engine installed and service enabled."
+else
+  echo "    Docker Engine already installed."
+fi
+sudo usermod -aG docker archangel || true
+
+echo "    Sudoers configuration, Docker access, and directories ready."
 REMOTE
 echo ""
 

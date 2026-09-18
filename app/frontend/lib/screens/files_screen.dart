@@ -281,7 +281,9 @@ class _FilesScreenState extends State<FilesScreen> {
                                 children: [
                                   const Icon(Icons.error_outline, size: 16, color: AxColors.bad),
                                   const SizedBox(width: 8),
-                                  Text(files.error!, style: AxTextStyles.mono.copyWith(color: AxColors.bad, fontSize: 12)),
+                                  Expanded(
+                                    child: Text(files.error!, style: AxTextStyles.mono.copyWith(color: AxColors.bad, fontSize: 12)),
+                                  ),
                                 ],
                               ),
                             )
