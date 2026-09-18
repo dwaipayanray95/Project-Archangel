@@ -23,6 +23,7 @@ class AxColors {
   static const warn = Color(0xFFE3B341);
   static const warnWash = Color(0x21E3B341);
   static const bad = Color(0xFFE5806B);
+  static const danger = bad;
   static const info = Color(0xFF79B8FF);
 
   static const accentOptions = <Color>[
