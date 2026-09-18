@@ -32,6 +32,13 @@ class _ContainersScreenState extends State<ContainersScreen> {
     Navigator.of(context).push(MaterialPageRoute(builder: (_) => ContainerDetailScreen(container: c)));
   }
 
+  void _showCreateContainerDialog(BuildContext context, ContainersService svc) {
+    showDialog(
+      context: context,
+      builder: (ctx) => _CreateContainerDialog(service: svc),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final svc = context.watch<ContainersService>();
@@ -85,6 +92,27 @@ class _ContainersScreenState extends State<ContainersScreen> {
                     selected: _view,
                     label: (v) => v == _View.cards ? 'Cards' : 'Table',
                     onSelect: (v) => setState(() => _view = v),
+                  ),
+                  const SizedBox(width: 8),
+                  InkWell(
+                    borderRadius: BorderRadius.circular(AxRadius.pill),
+                    onTap: () => _showCreateContainerDialog(context, svc),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: AxColors.accent.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(AxRadius.pill),
+                        border: Border.all(color: AxColors.accent.withValues(alpha: 0.35)),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.add_rounded, size: 14, color: AxColors.accent),
+                          const SizedBox(width: 5),
+                          Text('Run Container', style: AxTextStyles.sans.copyWith(fontSize: 11.5, fontWeight: FontWeight.w700, color: AxColors.accent)),
+                        ],
+                      ),
+                    ),
                   ),
                   const SizedBox(width: 8),
                   InkWell(
@@ -318,7 +346,7 @@ class _TableView extends StatelessWidget {
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         child: SizedBox(
-          width: 680,
+          width: 720,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -332,7 +360,7 @@ class _TableView extends StatelessWidget {
                     Expanded(flex: 9, child: Text('UPTIME', style: AxTextStyles.label)),
                     Expanded(flex: 7, child: Text('CPU', style: AxTextStyles.label, textAlign: TextAlign.right)),
                     Expanded(flex: 8, child: Text('MEM', style: AxTextStyles.label, textAlign: TextAlign.right)),
-                    const Expanded(flex: 9, child: SizedBox()),
+                    const Expanded(flex: 11, child: SizedBox()),
                   ],
                 ),
               ),
@@ -359,7 +387,7 @@ class _TableView extends StatelessWidget {
                         Expanded(flex: 7, child: Text('${c.cpu}%', textAlign: TextAlign.right, style: AxTextStyles.mono.copyWith(fontSize: 11))),
                         Expanded(flex: 8, child: Text(c.memLabel, textAlign: TextAlign.right, style: AxTextStyles.mono.copyWith(fontSize: 11, color: AxColors.fg2))),
                         Expanded(
-                          flex: 9,
+                          flex: 11,
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.end,
                             children: [
@@ -371,6 +399,34 @@ class _TableView extends StatelessWidget {
                               _IconBtn(
                                 icon: Icons.restart_alt_rounded,
                                 onTap: () => onAction(c, 'restart'),
+                              ),
+                              const SizedBox(width: 4),
+                              _IconBtn(
+                                icon: Icons.delete_outline_rounded,
+                                color: AxColors.danger,
+                                onTap: () async {
+                                  final confirm = await showDialog<bool>(
+                                    context: context,
+                                    builder: (ctx) => AlertDialog(
+                                      backgroundColor: AxColors.s1,
+                                      title: Text('Remove Container?', style: AxTextStyles.h2),
+                                      content: Text('Force remove container ${c.name}? This will delete the instance.', style: AxTextStyles.sans),
+                                      actions: [
+                                        TextButton(
+                                          onPressed: () => Navigator.of(ctx).pop(false),
+                                          child: Text('Cancel', style: AxTextStyles.sans.copyWith(color: AxColors.fg3)),
+                                        ),
+                                        TextButton(
+                                          onPressed: () => Navigator.of(ctx).pop(true),
+                                          child: Text('Remove', style: AxTextStyles.sans.copyWith(color: AxColors.danger, fontWeight: FontWeight.bold)),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                  if (confirm == true) {
+                                    onAction(c, 'remove');
+                                  }
+                                },
                               ),
                               const SizedBox(width: 4),
                               _IconBtn(
@@ -394,8 +450,9 @@ class _TableView extends StatelessWidget {
 
 class _IconBtn extends StatelessWidget {
   final IconData icon;
+  final Color? color;
   final VoidCallback? onTap;
-  const _IconBtn({required this.icon, this.onTap});
+  const _IconBtn({required this.icon, this.color, this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -405,7 +462,254 @@ class _IconBtn extends StatelessWidget {
         width: 24,
         height: 24,
         decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: AxColors.line)),
-        child: Icon(icon, size: 13, color: AxColors.fg2),
+        child: Icon(icon, size: 13, color: color ?? AxColors.fg2),
+      ),
+    );
+  }
+}
+
+class _CreateContainerDialog extends StatefulWidget {
+  final ContainersService service;
+  const _CreateContainerDialog({required this.service});
+
+  @override
+  State<_CreateContainerDialog> createState() => _CreateContainerDialogState();
+}
+
+class _CreateContainerDialogState extends State<_CreateContainerDialog> {
+  final _imageCtrl = TextEditingController();
+  final _nameCtrl = TextEditingController();
+  final _portsCtrl = TextEditingController();
+  final _envCtrl = TextEditingController();
+  String _restartPolicy = 'unless-stopped';
+  bool _loading = false;
+  String? _error;
+
+  final _quickImages = const ['nginx:alpine', 'redis:alpine', 'caddy:alpine', 'postgres:16-alpine'];
+
+  @override
+  void dispose() {
+    _imageCtrl.dispose();
+    _nameCtrl.dispose();
+    _portsCtrl.dispose();
+    _envCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final image = _imageCtrl.text.trim();
+    if (image.isEmpty) {
+      setState(() => _error = 'Image name is required');
+      return;
+    }
+
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    final ports = _portsCtrl.text
+        .split(RegExp(r'[\s,]+'))
+        .map((s) => s.trim())
+        .where((s) => s.isNotEmpty)
+        .toList();
+
+    final env = _envCtrl.text
+        .split(RegExp(r'[\r\n]+'))
+        .map((s) => s.trim())
+        .where((s) => s.isNotEmpty)
+        .toList();
+
+    final res = await widget.service.createContainer(
+      image: image,
+      name: _nameCtrl.text.trim().isEmpty ? null : _nameCtrl.text.trim(),
+      ports: ports.isEmpty ? null : ports,
+      env: env.isEmpty ? null : env,
+      restart: _restartPolicy,
+    );
+
+    if (!mounted) return;
+    setState(() => _loading = false);
+
+    if (res['success'] == true) {
+      Navigator.of(context).pop();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(res['message'] as String? ?? 'Container created successfully')),
+      );
+    } else {
+      setState(() => _error = res['message'] as String? ?? 'Failed to create container');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: AxColors.s1,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AxRadius.xl), side: const BorderSide(color: AxColors.line)),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 480),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(22),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('Run New Container', style: AxTextStyles.h2),
+                  IconButton(
+                    icon: const Icon(Icons.close_rounded, size: 18, color: AxColors.fg3),
+                    onPressed: _loading ? null : () => Navigator.of(context).pop(),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              Text('Image (e.g. nginx:alpine)', style: AxTextStyles.label),
+              const SizedBox(height: 5),
+              TextField(
+                controller: _imageCtrl,
+                style: AxTextStyles.mono.copyWith(fontSize: 13),
+                decoration: InputDecoration(
+                  hintText: 'nginx:alpine',
+                  hintStyle: AxTextStyles.mono.copyWith(fontSize: 13, color: AxColors.fg3),
+                  isDense: true,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  filled: true,
+                  fillColor: AxColors.s2,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: AxColors.line)),
+                  enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: AxColors.line)),
+                  focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: AxColors.accent)),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: _quickImages.map((img) {
+                  return InkWell(
+                    borderRadius: BorderRadius.circular(AxRadius.pill),
+                    onTap: () => setState(() => _imageCtrl.text = img),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: AxColors.s2,
+                        borderRadius: BorderRadius.circular(AxRadius.pill),
+                        border: Border.all(color: AxColors.line),
+                      ),
+                      child: Text(img, style: AxTextStyles.mono.copyWith(fontSize: 10, color: AxColors.fg2)),
+                    ),
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 12),
+              Text('Container Name (optional)', style: AxTextStyles.label),
+              const SizedBox(height: 5),
+              TextField(
+                controller: _nameCtrl,
+                style: AxTextStyles.mono.copyWith(fontSize: 13),
+                decoration: InputDecoration(
+                  hintText: 'my-web-app',
+                  hintStyle: AxTextStyles.mono.copyWith(fontSize: 13, color: AxColors.fg3),
+                  isDense: true,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  filled: true,
+                  fillColor: AxColors.s2,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: AxColors.line)),
+                  enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: AxColors.line)),
+                  focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: AxColors.accent)),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text('Ports (Host:Container, space or comma separated)', style: AxTextStyles.label),
+              const SizedBox(height: 5),
+              TextField(
+                controller: _portsCtrl,
+                style: AxTextStyles.mono.copyWith(fontSize: 13),
+                decoration: InputDecoration(
+                  hintText: '8080:80, 443:443',
+                  hintStyle: AxTextStyles.mono.copyWith(fontSize: 13, color: AxColors.fg3),
+                  isDense: true,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  filled: true,
+                  fillColor: AxColors.s2,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: AxColors.line)),
+                  enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: AxColors.line)),
+                  focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: AxColors.accent)),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text('Environment Variables (KEY=VALUE per line)', style: AxTextStyles.label),
+              const SizedBox(height: 5),
+              TextField(
+                controller: _envCtrl,
+                maxLines: 2,
+                style: AxTextStyles.mono.copyWith(fontSize: 12),
+                decoration: InputDecoration(
+                  hintText: 'NODE_ENV=production\nPORT=3000',
+                  hintStyle: AxTextStyles.mono.copyWith(fontSize: 12, color: AxColors.fg3),
+                  isDense: true,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  filled: true,
+                  fillColor: AxColors.s2,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: AxColors.line)),
+                  enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: AxColors.line)),
+                  focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: AxColors.accent)),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Text('Restart: ', style: AxTextStyles.label),
+                  const SizedBox(width: 8),
+                  DropdownButton<String>(
+                    value: _restartPolicy,
+                    dropdownColor: AxColors.s2,
+                    underline: const SizedBox(),
+                    style: AxTextStyles.mono.copyWith(fontSize: 12, color: AxColors.fg),
+                    items: const [
+                      DropdownMenuItem(value: 'unless-stopped', child: Text('unless-stopped')),
+                      DropdownMenuItem(value: 'always', child: Text('always')),
+                      DropdownMenuItem(value: 'no', child: Text('no')),
+                      DropdownMenuItem(value: 'on-failure', child: Text('on-failure')),
+                    ],
+                    onChanged: (v) {
+                      if (v != null) setState(() => _restartPolicy = v);
+                    },
+                  ),
+                ],
+              ),
+              if (_error != null) ...[
+                const SizedBox(height: 10),
+                Text(_error!, style: AxTextStyles.sans.copyWith(fontSize: 12, color: AxColors.danger)),
+              ],
+              const SizedBox(height: 18),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: _loading ? null : () => Navigator.of(context).pop(),
+                    child: Text('Cancel', style: AxTextStyles.sans.copyWith(color: AxColors.fg3)),
+                  ),
+                  const SizedBox(width: 10),
+                  ElevatedButton(
+                    onPressed: _loading ? null : _submit,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AxColors.accent,
+                      foregroundColor: Colors.black,
+                      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AxRadius.pill)),
+                    ),
+                    child: _loading
+                        ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black))
+                        : Text('Deploy Container', style: AxTextStyles.sans.copyWith(fontWeight: FontWeight.w700, color: Colors.black)),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

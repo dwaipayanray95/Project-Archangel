@@ -68,6 +68,46 @@ class _ContainerDetailScreenState extends State<ContainerDetailScreen> {
     }
   }
 
+  Future<void> _handleRemove() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AxColors.s1,
+        title: Text('Remove Container?', style: AxTextStyles.h2),
+        content: Text('Force remove container ${_container.name}? This will delete the instance.', style: AxTextStyles.sans),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text('Cancel', style: AxTextStyles.sans.copyWith(color: AxColors.fg3)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text('Remove', style: AxTextStyles.sans.copyWith(color: AxColors.danger, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !mounted) return;
+
+    setState(() => _actionLoading = true);
+    final svc = context.read<ContainersService>();
+    final ok = await svc.removeContainer(_container.id);
+    if (!mounted) return;
+    setState(() => _actionLoading = false);
+
+    if (ok) {
+      svc.stopLogStream();
+      Navigator.of(context).pop();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Container ${_container.name} removed.')),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to remove container ${_container.name}')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final svc = context.watch<ContainersService>();
@@ -153,6 +193,13 @@ class _ContainerDetailScreenState extends State<ContainerDetailScreen> {
                             appState.openTerminalWithCommand('docker exec -it ${c.name} sh');
                           },
                         ),
+                        const SizedBox(width: 6),
+                        _DetailAction(
+                          label: 'Remove',
+                          icon: Icons.delete_outline_rounded,
+                          color: AxColors.danger,
+                          onTap: _handleRemove,
+                        ),
                       ],
                     ),
                   ],
@@ -168,22 +215,21 @@ class _ContainerDetailScreenState extends State<ContainerDetailScreen> {
                       mainAxisSpacing: 9,
                       crossAxisSpacing: 9,
                       childAspectRatio: 3.2,
-                      children: [
-                        for (final s in stats)
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 9),
-                            decoration: BoxDecoration(color: AxColors.s2, borderRadius: BorderRadius.circular(11), border: Border.all(color: AxColors.line)),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Text(s[0], style: AxTextStyles.label),
-                                const SizedBox(height: 2),
-                                Text(s[1], style: AxTextStyles.mono.copyWith(fontSize: 13, fontWeight: FontWeight.w500), overflow: TextOverflow.ellipsis),
-                              ],
-                            ),
+                      children: stats.map((s) {
+                        return Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
+                          decoration: BoxDecoration(color: AxColors.s2, borderRadius: BorderRadius.circular(AxRadius.md), border: Border.all(color: AxColors.line)),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Text(s[0], style: AxTextStyles.label.copyWith(fontSize: 9.5)),
+                              const SizedBox(height: 2),
+                              Text(s[1], style: AxTextStyles.mono.copyWith(fontSize: 13.5, fontWeight: FontWeight.w500), overflow: TextOverflow.ellipsis),
+                            ],
                           ),
-                      ],
+                        );
+                      }).toList(),
                     );
                   },
                 ),
@@ -211,16 +257,19 @@ class _ContainerDetailScreenState extends State<ContainerDetailScreen> {
 class _DetailAction extends StatelessWidget {
   final String label;
   final IconData icon;
+  final Color? color;
   final VoidCallback? onTap;
 
   const _DetailAction({
     required this.label,
     required this.icon,
+    this.color,
     this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
+    final fg = color ?? AxColors.fg2;
     return InkWell(
       borderRadius: BorderRadius.circular(AxRadius.pill),
       onTap: onTap,
@@ -230,9 +279,9 @@ class _DetailAction extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 12, color: AxColors.fg2),
+            Icon(icon, size: 12, color: fg),
             const SizedBox(width: 6),
-            Text(label, style: AxTextStyles.sans.copyWith(fontSize: 11.5, fontWeight: FontWeight.w600, color: AxColors.fg2)),
+            Text(label, style: AxTextStyles.sans.copyWith(fontSize: 11.5, fontWeight: FontWeight.w600, color: fg)),
           ],
         ),
       ),

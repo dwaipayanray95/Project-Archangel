@@ -43,6 +43,7 @@ func NewRouter(verify auth.Verifier) http.Handler {
 
 	// Docker / Containers Cockpit
 	mux.Handle("GET /api/v1/docker/containers", auth.Middleware(verify, http.HandlerFunc(docker.ContainersHandler)))
+	mux.Handle("POST /api/v1/docker/containers/run", auth.Middleware(verify, http.HandlerFunc(docker.ContainerCreateHandler)))
 	mux.Handle("POST /api/v1/docker/containers/{id}/{action}", auth.Middleware(verify, http.HandlerFunc(docker.ContainerActionHandler)))
 	mux.Handle("GET /ws/docker/containers/{id}/logs", auth.Middleware(verify, http.HandlerFunc(docker.ContainerLogsWsHandler)))
 
@@ -54,6 +55,9 @@ func NewRouter(verify auth.Verifier) http.Handler {
 	mux.Handle("GET /api/v1/devops/proxy", auth.Middleware(verify, http.HandlerFunc(devops.ProxyHandler)))
 	mux.Handle("POST /api/v1/devops/proxy/{domain}/test", auth.Middleware(verify, http.HandlerFunc(devops.ProxyTestHandler)))
 	mux.Handle("GET /api/v1/devops/deployments", auth.Middleware(verify, http.HandlerFunc(devops.DeploymentsHandler)))
+	mux.Handle("POST /api/v1/devops/deployments", auth.Middleware(verify, http.HandlerFunc(devops.DeploymentCreateOrUpdateHandler)))
+	mux.Handle("GET /api/v1/devops/deployments/{name}/content", auth.Middleware(verify, http.HandlerFunc(devops.DeploymentContentHandler)))
+	mux.Handle("DELETE /api/v1/devops/deployments/{name}", auth.Middleware(verify, http.HandlerFunc(devops.DeploymentDeleteHandler)))
 	mux.Handle("POST /api/v1/devops/deployments/{name}/run", auth.Middleware(verify, http.HandlerFunc(devops.DeploymentRunHandler)))
 
 	return withLogging(mux)

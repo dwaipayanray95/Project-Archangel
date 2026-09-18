@@ -196,4 +196,64 @@ class DevopsService extends ChangeNotifier {
       return {'message': 'Error: $e', 'output': ''};
     }
   }
+
+  Future<bool> saveDeployment(String name, String content) async {
+    final backend = _backend;
+    if (backend == null || !backend.isPaired || backend.token == null) return false;
+
+    try {
+      final res = await http.post(
+        backend.devopsDeploymentCreateHttpUri(),
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Archangel-Token': backend.token!,
+        },
+        body: jsonEncode({
+          'name': name,
+          'content': content,
+        }),
+      );
+      fetchAll();
+      return res.statusCode == 200;
+    } catch (e) {
+      debugPrint('Error saving deployment: $e');
+      return false;
+    }
+  }
+
+  Future<String?> getDeploymentContent(String name) async {
+    final backend = _backend;
+    if (backend == null || !backend.isPaired || backend.token == null) return null;
+
+    try {
+      final res = await http.get(
+        backend.devopsDeploymentContentHttpUri(name),
+        headers: {'X-Archangel-Token': backend.token!},
+      );
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body) as Map<String, dynamic>;
+        return data['content'] as String?;
+      }
+    } catch (e) {
+      debugPrint('Error fetching deployment content: $e');
+    }
+    return null;
+  }
+
+  Future<bool> deleteDeployment(String name) async {
+    final backend = _backend;
+    if (backend == null || !backend.isPaired || backend.token == null) return false;
+
+    try {
+      final res = await http.delete(
+        backend.devopsDeploymentDeleteHttpUri(name),
+        headers: {'X-Archangel-Token': backend.token!},
+      );
+      fetchAll();
+      return res.statusCode == 200;
+    } catch (e) {
+      debugPrint('Error deleting deployment: $e');
+      return false;
+    }
+  }
 }

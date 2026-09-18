@@ -114,9 +114,59 @@ func ContainerActionHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	actionPast := action + "ed"
+	if action == "stop" {
+		actionPast = "stopped"
+	} else if action == "remove" || action == "rm" {
+		actionPast = "removed"
+	}
+
 	_ = json.NewEncoder(w).Encode(ActionResponse{
 		Success: true,
-		Message: fmt.Sprintf("container %s %sed successfully", id, action),
+		Message: fmt.Sprintf("container %s %s successfully", id, actionPast),
+	})
+}
+
+// ContainerCreateHandler handles POST /api/v1/docker/containers/run
+func ContainerCreateHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req CreateContainerRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("invalid request payload: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	if !defaultClient.IsAvailable() {
+		name := req.Name
+		if name == "" {
+			name = "demo-" + req.Image
+		}
+		_ = json.NewEncoder(w).Encode(ActionResponse{
+			Success: true,
+			Message: fmt.Sprintf("container %s created and started from %s (demo mode)", name, req.Image),
+		})
+		return
+	}
+
+	id, err := defaultClient.CreateAndStartContainer(r.Context(), req)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(ActionResponse{
+			Success: false,
+			Message: err.Error(),
+		})
+		return
+	}
+
+	_ = json.NewEncoder(w).Encode(ActionResponse{
+		Success: true,
+		Message: fmt.Sprintf("container %s created and started successfully", id),
 	})
 }
 

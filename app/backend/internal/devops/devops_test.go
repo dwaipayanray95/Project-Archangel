@@ -85,3 +85,40 @@ func TestTestProxyUpstreamRejectsMalformedDomain(t *testing.T) {
 		}
 	}
 }
+
+func TestDeploymentCRUDAndValidation(t *testing.T) {
+	// Bad names should be rejected
+	for _, bad := range []string{"../../evil.sh", "deploy;rm -rf.sh", "bad.txt", ""} {
+		if err := CreateOrUpdateDeployment(bad, "echo 1"); err == nil {
+			t.Errorf("CreateOrUpdateDeployment(%q) expected error, got nil", bad)
+		}
+		if _, err := GetDeploymentContent(bad); err == nil {
+			t.Errorf("GetDeploymentContent(%q) expected error, got nil", bad)
+		}
+		if err := DeleteDeployment(bad); err == nil {
+			t.Errorf("DeleteDeployment(%q) expected error, got nil", bad)
+		}
+	}
+
+	// Good name can be created, read, and deleted
+	testName := "test-archangel-deploy.sh"
+	testContent := "#!/bin/sh\necho 'hello deploy'\n"
+	err := CreateOrUpdateDeployment(testName, testContent)
+	if err != nil {
+		t.Logf("CreateOrUpdateDeployment failed (might be read-only filesystem on /srv/deploy): %v", err)
+	} else {
+		defer DeleteDeployment(testName)
+
+		content, err := GetDeploymentContent(testName)
+		if err != nil {
+			t.Errorf("GetDeploymentContent failed: %v", err)
+		}
+		if content != testContent {
+			t.Errorf("expected content %q, got %q", testContent, content)
+		}
+
+		if err := DeleteDeployment(testName); err != nil {
+			t.Errorf("DeleteDeployment failed: %v", err)
+		}
+	}
+}

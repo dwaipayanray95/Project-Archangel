@@ -54,3 +54,15 @@ type ActionResponse struct {
 	Message string `json:"message"`
 	Output  string `json:"output,omitempty"`
 }
+
+// CreateDeploymentRequest contains the filename and content for a deployment script.
+type CreateDeploymentRequest struct {
+	Name    string `json:"name"`
+	Content string `json:"content"`
+}
+
+// DeploymentContentResponse contains the script content for editing.
+type DeploymentContentResponse struct {
+	Name    string `json:"name"`
+	Content string `json:"content"`
+}

@@ -98,7 +98,33 @@ else
 fi
 sudo usermod -aG docker archangel || true
 
-echo "    Sudoers configuration, Docker access, and directories ready."
+# Ensure Caddy reverse proxy is installed and ports 80/443 are allowed
+if ! command -v caddy &> /dev/null; then
+  echo "    Caddy reverse proxy not found - installing official Caddy packages..."
+  sudo apt-get update -qq
+  sudo apt-get install -y -qq debian-keyring debian-archive-keyring apt-transport-https curl
+  curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg --yes
+  curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list > /dev/null
+  sudo apt-get update -qq
+  sudo apt-get install -y -qq caddy
+  sudo systemctl enable --now caddy
+  echo "    Caddy reverse proxy installed and service enabled."
+else
+  echo "    Caddy reverse proxy already installed."
+fi
+
+if [ -d /etc/caddy ]; then
+  sudo chown -R root:archangel /etc/caddy
+  sudo chmod 775 /etc/caddy
+fi
+
+# Allow HTTP and HTTPS in ufw if ufw is active
+if command -v ufw &> /dev/null && sudo ufw status | grep -q "Status: active"; then
+  sudo ufw allow 80/tcp > /dev/null
+  sudo ufw allow 443/tcp > /dev/null
+fi
+
+echo "    Sudoers configuration, Docker access, Caddy reverse proxy, and directories ready."
 REMOTE
 echo ""
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/dwaipayanray95/project-archangel/backend/internal/docker"
@@ -47,6 +48,49 @@ func TestContainerActionHandler(t *testing.T) {
 	rec := httptest.NewRecorder()
 
 	docker.ContainerActionHandler(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", rec.Code)
+	}
+
+	var res docker.ActionResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+		t.Fatalf("failed decoding json: %v", err)
+	}
+
+	if !res.Success {
+		t.Errorf("expected success, got false: %s", res.Message)
+	}
+}
+
+func TestContainerActionHandlerRemove(t *testing.T) {
+	req := httptest.NewRequest("POST", "/api/v1/docker/containers/redis/remove", nil)
+	req.SetPathValue("id", "redis")
+	req.SetPathValue("action", "remove")
+	rec := httptest.NewRecorder()
+
+	docker.ContainerActionHandler(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", rec.Code)
+	}
+
+	var res docker.ActionResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+		t.Fatalf("failed decoding json: %v", err)
+	}
+
+	if !res.Success {
+		t.Errorf("expected success, got false: %s", res.Message)
+	}
+}
+
+func TestContainerCreateHandler(t *testing.T) {
+	body := `{"image":"nginx:alpine","name":"test-web","ports":["8080:80"],"restart":"unless-stopped"}`
+	req := httptest.NewRequest("POST", "/api/v1/docker/containers/run", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	docker.ContainerCreateHandler(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 OK, got %d", rec.Code)

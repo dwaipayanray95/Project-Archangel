@@ -37,11 +37,13 @@ else
   sudo apt install -y -qq tmux
 fi
 
-echo "==> ufw (SSH-only baseline)"
+echo "==> ufw (SSH + HTTP/HTTPS baseline)"
 if ! command -v ufw > /dev/null; then
   sudo apt install -y -qq ufw
 fi
 sudo ufw allow OpenSSH > /dev/null || sudo ufw allow 22/tcp > /dev/null
+sudo ufw allow 80/tcp > /dev/null
+sudo ufw allow 443/tcp > /dev/null
 if sudo ufw status | grep -q "Status: active"; then
   echo "    ufw already active."
 else
@@ -58,6 +60,24 @@ else
 fi
 if id archangel > /dev/null 2>&1; then
   sudo usermod -aG docker archangel || true
+fi
+
+echo "==> Caddy Reverse Proxy"
+if command -v caddy > /dev/null; then
+  echo "    Caddy already installed - skipping."
+else
+  echo "    Installing Caddy from official deb repo..."
+  sudo apt install -y -qq debian-keyring debian-archive-keyring apt-transport-https curl
+  curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg --yes
+  curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list > /dev/null
+  sudo apt update -qq
+  sudo apt install -y -qq caddy
+  sudo systemctl enable --now caddy
+  echo "    Caddy reverse proxy installed and service enabled."
+fi
+if id archangel > /dev/null 2>&1 && [ -d /etc/caddy ]; then
+  sudo chown -R root:archangel /etc/caddy
+  sudo chmod 775 /etc/caddy
 fi
 
 echo "==> Done. Current state:"

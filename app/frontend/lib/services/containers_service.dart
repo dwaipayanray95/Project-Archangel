@@ -127,6 +127,54 @@ class ContainersService extends ChangeNotifier {
     }
   }
 
+  Future<Map<String, dynamic>> createContainer({
+    required String image,
+    String? name,
+    List<String>? ports,
+    List<String>? env,
+    String? restart,
+    List<String>? volumes,
+  }) async {
+    final backend = _backend;
+    if (backend == null || !backend.isPaired || backend.token == null) {
+      return {'success': false, 'message': 'Not connected to backend'};
+    }
+
+    try {
+      final payload = {
+        'image': image,
+        if (name != null && name.trim().isNotEmpty) 'name': name.trim(),
+        if (ports != null && ports.isNotEmpty) 'ports': ports,
+        if (env != null && env.isNotEmpty) 'env': env,
+        if (restart != null && restart.isNotEmpty) 'restart': restart,
+        if (volumes != null && volumes.isNotEmpty) 'volumes': volumes,
+      };
+
+      final res = await http.post(
+        backend.dockerContainerCreateHttpUri(),
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Archangel-Token': backend.token!,
+        },
+        body: jsonEncode(payload),
+      );
+
+      final data = jsonDecode(res.body) as Map<String, dynamic>;
+      fetchContainers();
+      return {
+        'success': data['success'] == true,
+        'message': data['message'] ?? (res.statusCode == 200 ? 'Container created' : 'Failed to create container'),
+      };
+    } catch (e) {
+      debugPrint('Error creating container: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  Future<bool> removeContainer(String containerId) async {
+    return triggerAction(containerId, 'remove');
+  }
+
   void startLogStream(String containerId) {
     _closeLogsStream();
     _activeLogContainerId = containerId;

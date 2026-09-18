@@ -1,12 +1,14 @@
 package docker
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
@@ -22,6 +24,9 @@ const defaultSocketPath = "/var/run/docker.sock"
 // or "..") could redirect the request to a different Engine API endpoint
 // entirely over the Unix socket, which is root-equivalent access.
 var validContainerID = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
+
+// validImageName validates Docker image references (e.g. nginx, alpine:3.18, ghcr.io/org/repo:v1).
+var validImageName = regexp.MustCompile(`^[a-zA-Z0-9_./:-]+$`)
 
 // Client interacts directly with Docker Engine via the local Unix socket.
 type Client struct {
@@ -44,7 +49,7 @@ func NewClient(socketPath ...string) *Client {
 	}
 
 	return &Client{
-		http:   &http.Client{Transport: tr, Timeout: 15 * time.Second},
+		http:   &http.Client{Transport: tr},
 		socket: sock,
 	}
 }
@@ -54,7 +59,13 @@ func (c *Client) IsAvailable() bool {
 	if _, err := os.Stat(c.socket); err != nil {
 		return false
 	}
-	resp, err := c.http.Get("http://localhost/version")
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://localhost/version", nil)
+	if err != nil {
+		return false
+	}
+	resp, err := c.http.Do(req)
 	if err != nil {
 		return false
 	}
@@ -64,7 +75,13 @@ func (c *Client) IsAvailable() bool {
 
 // GetVersion returns Docker engine version string.
 func (c *Client) GetVersion() string {
-	resp, err := c.http.Get("http://localhost/version")
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://localhost/version", nil)
+	if err != nil {
+		return "offline"
+	}
+	resp, err := c.http.Do(req)
 	if err != nil {
 		return "offline"
 	}
@@ -81,7 +98,13 @@ func (c *Client) GetVersion() string {
 
 // ListContainers returns parsed container summaries with stack classification.
 func (c *Client) ListContainers() ([]ContainerItem, error) {
-	resp, err := c.http.Get("http://localhost/containers/json?all=true")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://localhost/containers/json?all=true", nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -172,8 +195,8 @@ func (c *Client) ListContainers() ([]ContainerItem, error) {
 	}
 
 	// Concurrently query instantaneous stats for running containers (capped at 1.5s overall)
-	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
-	defer cancel()
+	statsCtx, statsCancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	defer statsCancel()
 
 	type statResult struct {
 		idx      int
@@ -192,7 +215,7 @@ func (c *Client) ListContainers() ([]ContainerItem, error) {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			cpu, memMb, label, err := c.ContainerStats(ctx, id)
+			cpu, memMb, label, err := c.ContainerStats(statsCtx, id)
 			if err == nil {
 				statChan <- statResult{idx: idx, cpu: cpu, memMb: memMb, memLabel: label}
 			} else {
@@ -221,7 +244,7 @@ func (c *Client) ListContainers() ([]ContainerItem, error) {
 			result[sr.idx].CPU = sr.cpu
 			result[sr.idx].MemMb = sr.memMb
 			result[sr.idx].MemLabel = sr.memLabel
-		case <-ctx.Done():
+		case <-statsCtx.Done():
 			collected = runningCount // Stop waiting if timed out
 		}
 	}
@@ -229,13 +252,14 @@ func (c *Client) ListContainers() ([]ContainerItem, error) {
 	return result, nil
 }
 
-// ContainerAction triggers start, stop, or restart.
+// ContainerAction triggers start, stop, restart, or remove.
 func (c *Client) ContainerAction(id, action string) error {
 	if !validContainerID.MatchString(id) {
 		return fmt.Errorf("invalid container id")
 	}
 
 	var endpoint string
+	method := http.MethodPost
 	switch action {
 	case "start":
 		endpoint = fmt.Sprintf("http://localhost/containers/%s/start", id)
@@ -243,11 +267,14 @@ func (c *Client) ContainerAction(id, action string) error {
 		endpoint = fmt.Sprintf("http://localhost/containers/%s/stop?t=10", id)
 	case "restart":
 		endpoint = fmt.Sprintf("http://localhost/containers/%s/restart?t=10", id)
+	case "remove", "rm":
+		endpoint = fmt.Sprintf("http://localhost/containers/%s?force=true", id)
+		method = http.MethodDelete
 	default:
 		return fmt.Errorf("unsupported action: %s", action)
 	}
 
-	req, err := http.NewRequest(http.MethodPost, endpoint, nil)
+	req, err := http.NewRequest(method, endpoint, nil)
 	if err != nil {
 		return err
 	}
@@ -263,6 +290,178 @@ func (c *Client) ContainerAction(id, action string) error {
 		return fmt.Errorf("docker API error %d: %s", resp.StatusCode, string(body))
 	}
 	return nil
+}
+
+// PullImage pulls a Docker image from registry over the Engine API.
+func (c *Client) PullImage(ctx context.Context, image string) error {
+	if !validImageName.MatchString(image) {
+		return fmt.Errorf("invalid image name")
+	}
+
+	endpoint := fmt.Sprintf("http://localhost/images/create?fromImage=%s", url.QueryEscape(image))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, nil)
+	if err != nil {
+		return err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("failed to pull image %s (status %d): %s", image, resp.StatusCode, string(body))
+	}
+
+	// Drain streaming body to wait for pull to complete
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return nil
+}
+
+// CreateAndStartContainer creates and starts a Docker container.
+func (c *Client) CreateAndStartContainer(ctx context.Context, req CreateContainerRequest) (string, error) {
+	cleanImage := strings.TrimSpace(req.Image)
+	if cleanImage == "" || !validImageName.MatchString(cleanImage) {
+		return "", fmt.Errorf("invalid or missing image name")
+	}
+
+	cleanName := strings.TrimSpace(req.Name)
+	if cleanName != "" && !validContainerID.MatchString(cleanName) {
+		return "", fmt.Errorf("invalid container name: %s", cleanName)
+	}
+
+	// Prepare ports
+	exposedPorts := make(map[string]struct{})
+	portBindings := make(map[string][]map[string]string)
+
+	for _, p := range req.Ports {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		parts := strings.Split(p, ":")
+		if len(parts) == 3 {
+			hostIP := strings.TrimSpace(parts[0])
+			hostPort := strings.TrimSpace(parts[1])
+			contPort := strings.TrimSpace(parts[2])
+			if !strings.Contains(contPort, "/") {
+				contPort += "/tcp"
+			}
+			exposedPorts[contPort] = struct{}{}
+			portBindings[contPort] = append(portBindings[contPort], map[string]string{
+				"HostIp":   hostIP,
+				"HostPort": hostPort,
+			})
+		} else if len(parts) == 2 {
+			hostPort := strings.TrimSpace(parts[0])
+			contPort := strings.TrimSpace(parts[1])
+			if !strings.Contains(contPort, "/") {
+				contPort += "/tcp"
+			}
+			exposedPorts[contPort] = struct{}{}
+			portBindings[contPort] = append(portBindings[contPort], map[string]string{
+				"HostIp":   "0.0.0.0",
+				"HostPort": hostPort,
+			})
+		} else if len(parts) == 1 {
+			contPort := strings.TrimSpace(parts[0])
+			if !strings.Contains(contPort, "/") {
+				contPort += "/tcp"
+			}
+			exposedPorts[contPort] = struct{}{}
+		}
+	}
+
+	var cleanVolumes []string
+	for _, v := range req.Volumes {
+		v = strings.TrimSpace(v)
+		if v != "" {
+			cleanVolumes = append(cleanVolumes, v)
+		}
+	}
+
+	restartPolicy := req.Restart
+	if restartPolicy == "" {
+		restartPolicy = "unless-stopped"
+	}
+
+	payload := map[string]any{
+		"Image":        cleanImage,
+		"Env":          req.Env,
+		"ExposedPorts": exposedPorts,
+		"HostConfig": map[string]any{
+			"PortBindings": portBindings,
+			"RestartPolicy": map[string]string{
+				"Name": restartPolicy,
+			},
+			"Binds": cleanVolumes,
+		},
+	}
+
+	bodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal container config: %w", err)
+	}
+
+	createEndpoint := "http://localhost/containers/create"
+	if cleanName != "" {
+		createEndpoint += "?name=" + url.QueryEscape(cleanName)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, createEndpoint, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return "", err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.http.Do(httpReq)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	// If image not found, pull it and retry creation
+	if resp.StatusCode == http.StatusNotFound {
+		pullCtx, pullCancel := context.WithTimeout(ctx, 3*time.Minute)
+		defer pullCancel()
+		if err := c.PullImage(pullCtx, cleanImage); err != nil {
+			return "", fmt.Errorf("image not found locally and pull failed: %w", err)
+		}
+
+		retryReq, err := http.NewRequestWithContext(ctx, http.MethodPost, createEndpoint, bytes.NewReader(bodyBytes))
+		if err != nil {
+			return "", err
+		}
+		retryReq.Header.Set("Content-Type", "application/json")
+
+		resp, err = c.http.Do(retryReq)
+		if err != nil {
+			return "", err
+		}
+		defer resp.Body.Close()
+	}
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("docker create container error %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var createResp struct {
+		ID       string   `json:"Id"`
+		Warnings []string `json:"Warnings"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&createResp); err != nil {
+		return "", fmt.Errorf("failed to decode create response: %w", err)
+	}
+
+	// Start container
+	if err := c.ContainerAction(createResp.ID, "start"); err != nil {
+		return createResp.ID, fmt.Errorf("container created (%s) but failed to start: %w", createResp.ID, err)
+	}
+
+	return createResp.ID, nil
 }
 
 // ContainerStats fetches instantaneous CPU and Memory statistics for a container.

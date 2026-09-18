@@ -263,11 +263,43 @@ class ArchangeldConnection extends ChangeNotifier {
     return Uri.parse('http://$_host/api/v1/devops/deployments');
   }
 
+  /// `http://<host>/api/v1/docker/containers/run`
+  Uri dockerContainerCreateHttpUri() {
+    if (!isPaired) {
+      throw StateError('Not paired with a backend');
+    }
+    return Uri.parse('http://$_host/api/v1/docker/containers/run');
+  }
+
   /// `http://<host>/api/v1/devops/deployments/{name}/run`
   Uri devopsDeploymentRunHttpUri(String name) {
     if (!isPaired) {
       throw StateError('Not paired with a backend');
     }
     return Uri.parse('http://$_host/api/v1/devops/deployments/$name/run');
+  }
+
+  /// `http://<host>/api/v1/devops/deployments`
+  Uri devopsDeploymentCreateHttpUri() {
+    if (!isPaired) {
+      throw StateError('Not paired with a backend');
+    }
+    return Uri.parse('http://$_host/api/v1/devops/deployments');
+  }
+
+  /// `http://<host>/api/v1/devops/deployments/{name}/content`
+  Uri devopsDeploymentContentHttpUri(String name) {
+    if (!isPaired) {
+      throw StateError('Not paired with a backend');
+    }
+    return Uri.parse('http://$_host/api/v1/devops/deployments/$name/content');
+  }
+
+  /// `http://<host>/api/v1/devops/deployments/{name}`
+  Uri devopsDeploymentDeleteHttpUri(String name) {
+    if (!isPaired) {
+      throw StateError('Not paired with a backend');
+    }
+    return Uri.parse('http://$_host/api/v1/devops/deployments/$name');
   }
 }

@@ -45,3 +45,13 @@ type ActionResponse struct {
 	Success bool   `json:"success"`
 	Message string `json:"message"`
 }
+
+// CreateContainerRequest contains parameters for spinning up a new container.
+type CreateContainerRequest struct {
+	Image   string   `json:"image"`
+	Name    string   `json:"name,omitempty"`
+	Ports   []string `json:"ports,omitempty"`   // Format: "8080:80" or "80"
+	Env     []string `json:"env,omitempty"`     // Format: "KEY=VALUE"
+	Restart string   `json:"restart,omitempty"` // "no", "always", "unless-stopped", "on-failure"
+	Volumes []string `json:"volumes,omitempty"` // Format: "/host/path:/container/path"
+}

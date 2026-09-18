@@ -190,3 +190,94 @@ func DeploymentRunHandler(w http.ResponseWriter, r *http.Request) {
 		Output:  out,
 	})
 }
+
+// DeploymentCreateOrUpdateHandler handles POST /api/v1/devops/deployments
+func DeploymentCreateOrUpdateHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req CreateDeploymentRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if req.Name == "" {
+		http.Error(w, "missing deployment script name", http.StatusBadRequest)
+		return
+	}
+
+	err := CreateOrUpdateDeployment(req.Name, req.Content)
+	w.Header().Set("Content-Type", "application/json")
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(ActionResponse{
+			Success: false,
+			Message: err.Error(),
+		})
+		return
+	}
+
+	_ = json.NewEncoder(w).Encode(ActionResponse{
+		Success: true,
+		Message: "deployment script " + req.Name + " saved successfully",
+	})
+}
+
+// DeploymentContentHandler handles GET /api/v1/devops/deployments/{name}/content
+func DeploymentContentHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	name := r.PathValue("name")
+	if name == "" {
+		http.Error(w, "missing deployment script name", http.StatusBadRequest)
+		return
+	}
+
+	content, err := GetDeploymentContent(name)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(DeploymentContentResponse{
+		Name:    name,
+		Content: content,
+	})
+}
+
+// DeploymentDeleteHandler handles DELETE /api/v1/devops/deployments/{name}
+func DeploymentDeleteHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	name := r.PathValue("name")
+	if name == "" {
+		http.Error(w, "missing deployment script name", http.StatusBadRequest)
+		return
+	}
+
+	err := DeleteDeployment(name)
+	w.Header().Set("Content-Type", "application/json")
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(ActionResponse{
+			Success: false,
+			Message: err.Error(),
+		})
+		return
+	}
+
+	_ = json.NewEncoder(w).Encode(ActionResponse{
+		Success: true,
+		Message: "deployment script " + name + " deleted successfully",
+	})
+}

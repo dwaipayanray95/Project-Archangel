@@ -398,6 +398,27 @@ if ! command -v docker >/dev/null 2>&1; then
 fi
 sudo usermod -aG docker archangel || true
 
+# Ensure Caddy reverse proxy is installed and ports 80/443 are allowed
+if ! command -v caddy >/dev/null 2>&1; then
+  sudo apt-get update -qq
+  sudo apt-get install -y -qq debian-keyring debian-archive-keyring apt-transport-https curl
+  curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg --yes
+  curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list > /dev/null
+  sudo apt-get update -qq
+  sudo apt-get install -y -qq caddy
+  sudo systemctl enable --now caddy
+fi
+
+if [ -d /etc/caddy ]; then
+  sudo chown -R root:archangel /etc/caddy
+  sudo chmod 775 /etc/caddy
+fi
+
+if command -v ufw >/dev/null 2>&1 && sudo ufw status | grep -q "Status: active"; then
+  sudo ufw allow 80/tcp > /dev/null
+  sudo ufw allow 443/tcp > /dev/null
+fi
+
 sudo systemctl daemon-reload
 ''';
     final syncResult = await _exec(syncScript);
