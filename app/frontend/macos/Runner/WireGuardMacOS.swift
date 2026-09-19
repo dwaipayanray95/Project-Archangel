@@ -181,7 +181,7 @@ case "$CMD" in
     ;;
 esac
 """
-        let sudoersContent = "%admin ALL=(ALL) NOPASSWD: \(WireGuardMacOS.helperPath)\\n"
+        let sudoersContent = "%admin ALL=(ALL) NOPASSWD: \(WireGuardMacOS.helperPath)\n"
 
         // Base64 encode the files to safely transfer them into the elevated script without quote/escape issues
         guard let scriptData = scriptContent.data(using: .utf8),
@@ -199,6 +199,10 @@ chown root:wheel '\(WireGuardMacOS.helperPath)'
 echo '\(sudoersB64)' | /usr/bin/base64 --decode > '\(WireGuardMacOS.sudoersPath)'
 chmod 440 '\(WireGuardMacOS.sudoersPath)'
 chown root:wheel '\(WireGuardMacOS.sudoersPath)'
+if ! /usr/sbin/visudo -c -f '\(WireGuardMacOS.sudoersPath)'; then
+    rm -f '\(WireGuardMacOS.sudoersPath)'
+    exit 1
+fi
 """
         let escaped = installCmd.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
         let osascript = "do shell script \"\(escaped)\" with administrator privileges"
@@ -209,7 +213,7 @@ chown root:wheel '\(WireGuardMacOS.sudoersPath)'
         try task.run()
         task.waitUntilExit()
         guard task.terminationStatus == 0 else {
-            throw WGMacError.message("Administrator authorization was declined or failed.")
+            throw WGMacError.message("Administrator authorization was declined or sudoers configuration is invalid.")
         }
 
         if !isHelperInstalled() {
